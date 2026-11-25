@@ -3,28 +3,34 @@
 use dbmcp_privacy::MaybeRedact as _;
 use dbmcp_server::listing::Cursor;
 use dbmcp_server::truncate::{Truncation, caps};
-use dbmcp_server::types::{ReadQueryResponse, resolve_timeout};
-use dbmcp_truncate::{Window, fit};
-
+use dbmcp_server::types::{ReadRequest, ReadResponse, resolve_timeout};
 use dbmcp_sql::Dialect;
 use dbmcp_sql::StatementKind;
 use dbmcp_sql::pagination::{Page, plan};
 use dbmcp_sql::validation::validate_read;
+use dbmcp_truncate::{Window, fit};
 
 use super::prelude::*;
-use crate::types::ReadQueryRequest;
 use dbmcp_policy::Access;
 
 const NAME: &str = "read";
 const TITLE: &str = "Read";
-const DESCRIPTION: &str = include_str!("../../assets/tools/read_query.md");
+const DESCRIPTION: &str = include_str!("../../assets/tools/read.md");
 
-/// Marker type for the `readQuery` MCP tool.
-pub(crate) struct ReadQueryTool;
+fn annotations() -> ToolAnnotations {
+    ToolAnnotations::new()
+        .read_only(true)
+        .destructive(false)
+        .idempotent(true)
+        .open_world(true)
+}
 
-impl ToolBase for ReadQueryTool {
-    type Parameter = ReadQueryRequest;
-    type Output = ReadQueryResponse;
+/// Marker type for the `read` MCP tool.
+pub(crate) struct ReadTool<const PINNED: bool>;
+
+impl<const PINNED: bool> ToolBase for ReadTool<PINNED> {
+    type Parameter = ReadRequest;
+    type Output = ReadResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
@@ -40,7 +46,7 @@ impl ToolBase for ReadQueryTool {
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>(true))
+        Some(input_schema::<Self::Parameter>(PINNED))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
@@ -48,34 +54,30 @@ impl ToolBase for ReadQueryTool {
     }
 
     fn annotations() -> Option<ToolAnnotations> {
-        Some(
-            ToolAnnotations::new()
-                .read_only(true)
-                .destructive(false)
-                .idempotent(true)
-                .open_world(true),
-        )
+        Some(annotations())
     }
 }
 
-impl AsyncTool<SqliteHandler> for ReadQueryTool {
-    async fn invoke(handler: &SqliteHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler.read_query(params).await
+impl<const PINNED: bool> AsyncTool<PostgresHandler> for ReadTool<PINNED> {
+    async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
+        handler
+            .read(params.query, params.database, params.cursor, params.timeout)
+            .await
     }
 }
 
-impl SqliteHandler {
+impl PostgresHandler {
     /// Executes a read-only SQL query, paginating `SELECT` result rows.
     ///
-    /// Validates that the query is read-only and runs it under
-    /// `query_only`, so `SQLite` rejects writes the validator misses. It
-    /// then dispatches on the classified [`StatementKind`]: `Select` gets
+    /// Validates that the query is read-only and runs it in a read-only
+    /// transaction, so the database rejects writes the validator misses.
+    /// It then dispatches on the classified [`StatementKind`]: `Select` gets
     /// the page window spliced into its own top-level `LIMIT`/`OFFSET`, or
     /// runs unchanged with the page cut client-side when it cannot be spliced;
-    /// `NonSelect` (`EXPLAIN` under the `SQLite` dialect) is executed as-is
-    /// and returned in a single page. A malformed `cursor` is rejected by the serde deserializer
-    /// before this method is called, which rmcp reports as a tool result
-    /// with `isError: true`.
+    /// `NonSelect` (`SHOW`, `EXPLAIN` under the PG dialect) is executed
+    /// as-is and returned in a single page. A malformed `cursor` is
+    /// rejected by the serde deserializer before this method is called,
+    /// which rmcp reports as a tool result with `isError: true`.
     ///
     /// # Errors
     ///
@@ -89,19 +91,23 @@ impl SqliteHandler {
     /// [`SqlError::Query`]: dbmcp_sql::SqlError::Query
     /// [`SqlError::ReadOnlyViolation`]: dbmcp_sql::SqlError::ReadOnlyViolation
     /// [`SqlError::UseBlocked`]: dbmcp_sql::SqlError::UseBlocked
-    pub async fn read_query(
+    pub async fn read(
         &self,
-        ReadQueryRequest { query, cursor, timeout }: ReadQueryRequest,
-    ) -> Result<ReadQueryResponse, ErrorData> {
-        let kind = validate_read(&query, Dialect::Sqlite)?;
+        query: String,
+        database: Option<String>,
+        cursor: Option<Cursor>,
+        timeout: Option<u64>,
+    ) -> Result<ReadResponse, ErrorData> {
+        let kind = validate_read(&query, Dialect::Postgres)?;
         let timeout = resolve_timeout(timeout, self.config.query_timeout, self.config.max_query_timeout)?;
+        let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
         let start = cursor.map_or(0, |c| c.offset);
         let page_size = Some(usize::from(self.config.page_size));
         let (sql, offset, size) = match kind {
             StatementKind::Select => {
                 let limit = u64::from(self.config.page_size) + 1;
-                match plan(&query, &sqlparser::dialect::SQLiteDialect {}, limit, start) {
+                match plan(&query, &sqlparser::dialect::PostgreSqlDialect {}, limit, start) {
                     Page::Merged(sql) => (Cow::Owned(sql), 0, page_size),
                     Page::Skip => (Cow::Borrowed(query.as_str()), start, page_size),
                 }
@@ -111,12 +117,12 @@ impl SqliteHandler {
         let caps = caps(self.config.max_cell_chars, self.config.max_response_chars);
         let mut window = Window::new(offset, size, caps);
         let rows = if let Some(policy) = &self.policy {
-            self.enforce(policy, &sql, Access::Read, timeout, &mut window)
+            self.enforce(policy, &sql, Access::Read, timeout, database, &mut window)
                 .await?
                 .rows
         } else {
             self.connection
-                .read_json(&*sql, None, timeout, |row| window.push(row))
+                .read_json(&*sql, database, timeout, |row| window.push(row))
                 .await?;
             self.redactor
                 .redact_rows(window.items)
@@ -142,7 +148,7 @@ impl SqliteHandler {
                 Truncation::new(fitted.cut, fitted.dropped.saturating_add(window.rest)),
             ),
         };
-        Ok(ReadQueryResponse {
+        Ok(ReadResponse {
             rows: fitted.items,
             next_cursor,
             truncation,

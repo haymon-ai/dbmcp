@@ -2,31 +2,23 @@
 
 use dbmcp_privacy::MaybeRedact as _;
 use dbmcp_server::truncate::{Truncation, caps};
-use dbmcp_server::types::{QueryRequest, WriteQueryResponse};
+use dbmcp_server::types::WriteResponse;
 use dbmcp_truncate::{Window, fit};
 
 use super::prelude::*;
+use crate::types::WriteRequest;
 use dbmcp_policy::Access;
 
 const NAME: &str = "write";
 const TITLE: &str = "Write";
-const DESCRIPTION_PINNED: &str = include_str!("../../assets/tools/write_query/pinned.md");
-const DESCRIPTION_UNPINNED: &str = include_str!("../../assets/tools/write_query/unpinned.md");
+const DESCRIPTION: &str = include_str!("../../assets/tools/write.md");
 
-fn annotations() -> ToolAnnotations {
-    ToolAnnotations::new()
-        .read_only(false)
-        .destructive(true)
-        .idempotent(false)
-        .open_world(true)
-}
+/// Marker type for the `write` MCP tool.
+pub(crate) struct WriteTool;
 
-/// Marker type for the `writeQuery` MCP tool.
-pub(crate) struct WriteQueryTool<const PINNED: bool>;
-
-impl<const PINNED: bool> ToolBase for WriteQueryTool<PINNED> {
-    type Parameter = QueryRequest;
-    type Output = WriteQueryResponse;
+impl ToolBase for WriteTool {
+    type Parameter = WriteRequest;
+    type Output = WriteResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
@@ -38,18 +30,11 @@ impl<const PINNED: bool> ToolBase for WriteQueryTool<PINNED> {
     }
 
     fn description() -> Option<Cow<'static, str>> {
-        Some(
-            if PINNED {
-                DESCRIPTION_PINNED
-            } else {
-                DESCRIPTION_UNPINNED
-            }
-            .into(),
-        )
+        Some(DESCRIPTION.into())
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>(PINNED))
+        Some(input_schema::<Self::Parameter>(true))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
@@ -57,17 +42,23 @@ impl<const PINNED: bool> ToolBase for WriteQueryTool<PINNED> {
     }
 
     fn annotations() -> Option<ToolAnnotations> {
-        Some(annotations())
+        Some(
+            ToolAnnotations::new()
+                .read_only(false)
+                .destructive(true)
+                .idempotent(false)
+                .open_world(true),
+        )
     }
 }
 
-impl<const PINNED: bool> AsyncTool<PostgresHandler> for WriteQueryTool<PINNED> {
-    async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler.write_query(params.query, params.database).await
+impl AsyncTool<SqliteHandler> for WriteTool {
+    async fn invoke(handler: &SqliteHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
+        handler.write(params).await
     }
 }
 
-impl PostgresHandler {
+impl SqliteHandler {
     /// Executes a write SQL query.
     ///
     /// # Errors
@@ -78,20 +69,19 @@ impl PostgresHandler {
     ///
     /// [`SqlError`]: dbmcp_sql::SqlError
     /// [`SqlError::ReadOnlyViolation`]: dbmcp_sql::SqlError::ReadOnlyViolation
-    pub async fn write_query(&self, query: String, database: Option<String>) -> Result<WriteQueryResponse, ErrorData> {
-        let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    pub async fn write(&self, WriteRequest { query }: WriteRequest) -> Result<WriteResponse, ErrorData> {
         let caps = caps(self.config.max_cell_chars, self.config.max_response_chars);
         let mut window = Window::new(0, None, caps);
         let (rows, rows_affected, last_insert_id) = if let Some(policy) = &self.policy {
             let timeout = self.connection.query_timeout();
             let enforced = self
-                .enforce(policy, &query, Access::Write, timeout, database, &mut window)
+                .enforce(policy, &query, Access::Write, timeout, &mut window)
                 .await?;
             (enforced.rows, enforced.rows_affected, enforced.last_insert_id)
         } else {
             let (rows_affected, last_insert_id) = self
                 .connection
-                .execute_json(query.as_str(), database, |row| window.push(row))
+                .execute_json(query.as_str(), None, |row| window.push(row))
                 .await?;
             let rows = self
                 .redactor
@@ -102,7 +92,7 @@ impl PostgresHandler {
         };
         let fitted = fit(rows, caps);
 
-        Ok(WriteQueryResponse {
+        Ok(WriteResponse {
             rows: fitted.items,
             rows_affected,
             last_insert_id,

@@ -1,4 +1,4 @@
-//! Prunes `explainQuery` plans of ruled relations to value-free keys.
+//! Prunes `explain` plans of ruled relations to value-free keys.
 //!
 //! Each dialect has one flat allowlist: at any depth a key survives only when
 //! listed, an unlisted key drops with its whole subtree. The outer shape of

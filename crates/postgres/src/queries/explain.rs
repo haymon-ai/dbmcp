@@ -1,4 +1,4 @@
-//! `EXPLAIN (FORMAT JSON)` statement builder for `explainQuery`.
+//! `EXPLAIN (FORMAT JSON)` statement builder for `explain`.
 
 /// Prefix of a plan request that also runs the statement.
 const ANALYZE: &str = "EXPLAIN (ANALYZE, FORMAT JSON)";

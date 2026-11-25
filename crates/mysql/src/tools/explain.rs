@@ -2,7 +2,7 @@
 
 use dbmcp_privacy::MaybeRedact as _;
 use dbmcp_server::truncate::{Truncation, caps};
-use dbmcp_server::types::{ExplainQueryRequest, QueryResponse, resolve_timeout};
+use dbmcp_server::types::{ExplainRequest, ExplainResponse, resolve_timeout};
 use dbmcp_sql::Dialect;
 use dbmcp_sql::validation::{validate_read, validate_single_statement};
 use dbmcp_truncate::{Window, fit};
@@ -14,7 +14,7 @@ use dbmcp_policy::Access;
 
 const NAME: &str = "explain";
 const TITLE: &str = "Explain";
-const DESCRIPTION: &str = include_str!("../../assets/tools/explain_query.md");
+const DESCRIPTION: &str = include_str!("../../assets/tools/explain.md");
 
 fn annotations() -> ToolAnnotations {
     ToolAnnotations::new()
@@ -24,12 +24,12 @@ fn annotations() -> ToolAnnotations {
         .open_world(true)
 }
 
-/// Marker type for the `explainQuery` MCP tool.
-pub(crate) struct ExplainQueryTool<const PINNED: bool>;
+/// Marker type for the `explain` MCP tool.
+pub(crate) struct ExplainTool<const PINNED: bool>;
 
-impl<const PINNED: bool> ToolBase for ExplainQueryTool<PINNED> {
-    type Parameter = ExplainQueryRequest;
-    type Output = QueryResponse;
+impl<const PINNED: bool> ToolBase for ExplainTool<PINNED> {
+    type Parameter = ExplainRequest;
+    type Output = ExplainResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
@@ -57,10 +57,10 @@ impl<const PINNED: bool> ToolBase for ExplainQueryTool<PINNED> {
     }
 }
 
-impl<const PINNED: bool> AsyncTool<MysqlHandler> for ExplainQueryTool<PINNED> {
+impl<const PINNED: bool> AsyncTool<MysqlHandler> for ExplainTool<PINNED> {
     async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
         handler
-            .explain_query(params.database, params.query, params.analyze, params.timeout)
+            .explain(params.database, params.query, params.analyze, params.timeout)
             .await
     }
 }
@@ -95,13 +95,13 @@ impl MysqlHandler {
     /// [`SqlError::Query`]: dbmcp_sql::SqlError::Query
     /// [`SqlError::ReadOnlyViolation`]: dbmcp_sql::SqlError::ReadOnlyViolation
     /// [`SqlError::UnreadableCharacter`]: dbmcp_sql::SqlError::UnreadableCharacter
-    pub async fn explain_query(
+    pub async fn explain(
         &self,
         database: Option<String>,
         query: String,
         analyze: bool,
         timeout: Option<u64>,
-    ) -> Result<QueryResponse, ErrorData> {
+    ) -> Result<ExplainResponse, ErrorData> {
         if analyze {
             let _ = validate_read(
                 &query,
@@ -147,7 +147,7 @@ impl MysqlHandler {
         };
         let fitted = fit(rows, caps);
 
-        Ok(QueryResponse {
+        Ok(ExplainResponse {
             rows: fitted.items,
             truncation: Truncation::new(fitted.cut, fitted.dropped.saturating_add(window.rest)),
         })

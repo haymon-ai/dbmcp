@@ -14,7 +14,7 @@ use rmcp::model::ServerConfig;
 use rmcp::{ServerHandler, tool_handler};
 
 use crate::connection::MysqlConnection;
-use crate::tools::{ExplainQueryTool, ObjectsTool, ReadQueryTool, WriteQueryTool};
+use crate::tools::{ExplainTool, ObjectsTool, ReadTool, WriteTool};
 
 /// Backend-specific description for MySQL/MariaDB.
 const DESCRIPTION: &str = "The privacy first MCP server for SQL databases.";
@@ -38,12 +38,12 @@ const INSTRUCTIONS_READ_ONLY_PINNED: &str = include_str!("../assets/instructions
 const TOOLS: &[ToolSpec<MysqlHandler>] = &[
     ToolSpec::tool::<ObjectsTool<true>>(true, false),
     ToolSpec::tool::<ObjectsTool<false>>(false, false),
-    ToolSpec::tool::<ReadQueryTool<true>>(true, false),
-    ToolSpec::tool::<ReadQueryTool<false>>(false, false),
-    ToolSpec::tool::<ExplainQueryTool<true>>(true, false),
-    ToolSpec::tool::<ExplainQueryTool<false>>(false, false),
-    ToolSpec::tool::<WriteQueryTool<true>>(true, true),
-    ToolSpec::tool::<WriteQueryTool<false>>(false, true),
+    ToolSpec::tool::<ReadTool<true>>(true, false),
+    ToolSpec::tool::<ReadTool<false>>(false, false),
+    ToolSpec::tool::<ExplainTool<true>>(true, false),
+    ToolSpec::tool::<ExplainTool<false>>(false, false),
+    ToolSpec::tool::<WriteTool<true>>(true, true),
+    ToolSpec::tool::<WriteTool<false>>(false, true),
 ];
 
 /// MySQL/MariaDB database handler.

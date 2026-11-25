@@ -12,8 +12,7 @@ mod probe;
 mod rows;
 
 use dbmcp_mysql::MysqlHandler;
-use dbmcp_mysql::types::ListEntries;
-use dbmcp_server::types::{CreateDatabaseRequest, DropDatabaseRequest, ListDatabasesRequest};
+use dbmcp_mysql::types::{Detail, ObjectKind, Objects, ObjectsRequest};
 use dbmcp_sql::support::Line;
 use dbmcp_types::{Config, Transport, database, privacy};
 use serde_json::Value;
@@ -29,7 +28,7 @@ fn backend() -> database::Backend {
 /// Reads the server's release line from `VERSION()`.
 async fn server_version() -> Line {
     let response = handler(true)
-        .read_query("SELECT VERSION() AS v".into(), None, None, None)
+        .read("SELECT VERSION() AS v".into(), None, None, None)
         .await
         .expect("read VERSION()");
     let version = response.rows[0]["v"].as_str().expect("VERSION() is text");
@@ -85,7 +84,7 @@ async fn assert_statement_gone(marker: &str) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
         let response = observer
-            .read_query(sql.clone(), None, None, None)
+            .read(sql.clone(), None, None, None)
             .await
             .expect("processlist query");
         if response.rows[0]["n"].as_i64() == Some(0) {
@@ -106,7 +105,7 @@ async fn session_timeout(handler: &MysqlHandler) -> f64 {
         _ => "max_execution_time",
     };
     let response = handler
-        .read_query(format!("SELECT @@SESSION.{variable} AS v"), None, None, None)
+        .read(format!("SELECT @@SESSION.{variable} AS v"), None, None, None)
         .await
         .expect("session variable query");
     let value = &response.rows[0]["v"];
@@ -140,7 +139,7 @@ async fn assert_timed_out<T>(handler: &MysqlHandler, result: Result<T, rmcp::Err
     );
     assert_statement_gone(marker).await;
     handler
-        .read_query("SELECT 1 AS one".into(), None, None, None)
+        .read("SELECT 1 AS one".into(), None, None, None)
         .await
         .expect("pool slot freed after timeout");
 }
@@ -157,7 +156,7 @@ async fn test_write_query_insert_and_verify() {
     let handler = handler(false);
 
     handler
-        .write_query(
+        .write(
             "INSERT INTO users (name, email) VALUES ('WriteTest', 'write@test.com')".into(),
             Some("app".into()),
         )
@@ -166,7 +165,7 @@ async fn test_write_query_insert_and_verify() {
 
     // Verify the row was inserted
     let rows = handler
-        .read_query(
+        .read(
             "SELECT name FROM users WHERE email = 'write@test.com'".into(),
             Some("app".into()),
             None,
@@ -180,7 +179,7 @@ async fn test_write_query_insert_and_verify() {
 
     // Clean up
     handler
-        .write_query(
+        .write(
             "DELETE FROM users WHERE email = 'write@test.com'".into(),
             Some("app".into()),
         )
@@ -194,7 +193,7 @@ async fn test_write_query_update() {
 
     // Insert a row
     handler
-        .write_query(
+        .write(
             "INSERT INTO users (name, email) VALUES ('Before', 'update@test.com')".into(),
             Some("app".into()),
         )
@@ -203,7 +202,7 @@ async fn test_write_query_update() {
 
     // Update it
     handler
-        .write_query(
+        .write(
             "UPDATE users SET name = 'After' WHERE email = 'update@test.com'".into(),
             Some("app".into()),
         )
@@ -212,7 +211,7 @@ async fn test_write_query_update() {
 
     // Verify
     let rows = handler
-        .read_query(
+        .read(
             "SELECT name FROM users WHERE email = 'update@test.com'".into(),
             Some("app".into()),
             None,
@@ -225,7 +224,7 @@ async fn test_write_query_update() {
 
     // Clean up
     handler
-        .write_query(
+        .write(
             "DELETE FROM users WHERE email = 'update@test.com'".into(),
             Some("app".into()),
         )
@@ -238,7 +237,7 @@ async fn test_write_query_delete() {
     let handler = handler(false);
 
     handler
-        .write_query(
+        .write(
             "INSERT INTO users (name, email) VALUES ('Deletable', 'delete@test.com')".into(),
             Some("app".into()),
         )
@@ -246,7 +245,7 @@ async fn test_write_query_delete() {
         .unwrap();
 
     handler
-        .write_query(
+        .write(
             "DELETE FROM users WHERE email = 'delete@test.com'".into(),
             Some("app".into()),
         )
@@ -254,7 +253,7 @@ async fn test_write_query_delete() {
         .unwrap();
 
     let rows = handler
-        .read_query(
+        .read(
             "SELECT * FROM users WHERE email = 'delete@test.com'".into(),
             Some("app".into()),
             None,
@@ -270,8 +269,14 @@ async fn test_write_query_delete() {
 async fn test_lists_databases() {
     let handler = handler(false);
 
-    let response = handler.list_databases(ListDatabasesRequest::default()).await.unwrap();
-    let dbs = response.databases;
+    let response = handler
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Database,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let dbs = response.objects.into_brief().expect("database names");
 
     assert!(dbs.iter().any(|db| db == "app"), "Expected 'app' in: {dbs:?}");
 }
@@ -281,10 +286,13 @@ async fn test_lists_tables() {
     let handler = handler(false);
 
     let response = handler
-        .list_tables(Some("app".into()), None, None, false)
+        .objects(ObjectsRequest {
+            database: Some("app".into()),
+            ..Default::default()
+        })
         .await
         .unwrap();
-    let ListEntries::Brief(tables) = response.entries else {
+    let Objects::Brief(tables) = response.objects else {
         panic!("expected brief-mode tables");
     };
 
@@ -301,7 +309,7 @@ async fn test_executes_sql() {
     let handler = handler(false);
 
     let response = handler
-        .read_query("SELECT * FROM users ORDER BY id".into(), Some("app".into()), None, None)
+        .read("SELECT * FROM users ORDER BY id".into(), Some("app".into()), None, None)
         .await
         .unwrap();
     assert_eq!(response.rows.len(), 3, "Expected 3 users, got {}", response.rows.len());
@@ -312,7 +320,7 @@ async fn test_blocks_writes_in_read_only_mode() {
     let handler = handler(false);
 
     let response = handler
-        .read_query(
+        .read(
             "INSERT INTO users (name, email) VALUES ('Hacker', 'hack@evil.com')".into(),
             Some("app".into()),
             None,
@@ -324,96 +332,17 @@ async fn test_blocks_writes_in_read_only_mode() {
 }
 
 #[tokio::test]
-async fn test_creates_database() {
-    let handler = handler(false);
-    let request = CreateDatabaseRequest {
-        database: "app_new".into(),
-    };
-
-    let response = handler.create_database(request).await.unwrap();
-    assert!(response.message.contains("created successfully"));
-
-    let response = handler.list_databases(ListDatabasesRequest::default()).await.unwrap();
-    let dbs = response.databases;
-
-    assert!(dbs.iter().any(|db| db == "app_new"), "New db not in list");
-}
-
-#[tokio::test]
-async fn test_drops_database() {
-    let handler = handler(false);
-
-    // Verify seeded database exists
-    let response = handler.list_databases(ListDatabasesRequest::default()).await.unwrap();
-    let dbs = response.databases;
-    assert!(dbs.iter().any(|db| db == "canary"), "canary should exist before drop");
-
-    // Drop it
-    let drop_request = DropDatabaseRequest {
-        database: "canary".into(),
-    };
-    let response = handler.drop_database(drop_request).await.unwrap();
-    assert!(response.message.contains("dropped successfully"));
-
-    // Verify it's gone
-    let response = handler.list_databases(ListDatabasesRequest::default()).await.unwrap();
-    let dbs = response.databases;
-    assert!(
-        !dbs.iter().any(|db| db == "canary"),
-        "canary should not exist after drop"
-    );
-}
-
-#[tokio::test]
-async fn test_drop_active_database_blocked() {
-    let handler = handler(false);
-    let request = DropDatabaseRequest { database: "app".into() };
-
-    let response = handler.drop_database(request).await;
-
-    let err_msg = format!(
-        "{:?}",
-        response.expect_err("Expected error when dropping active database")
-    );
-    assert!(
-        err_msg.contains("currently connected"),
-        "Expected 'currently connected' in error, got: {err_msg}"
-    );
-}
-
-#[tokio::test]
-async fn test_drop_nonexistent_database() {
-    let handler = handler(false);
-    let request = DropDatabaseRequest {
-        database: "nonexistent_db_xyz".into(),
-    };
-
-    let response = handler.drop_database(request).await;
-
-    assert!(response.is_err(), "Expected error for nonexistent database");
-}
-
-#[tokio::test]
-async fn test_drop_database_invalid_identifier() {
-    let handler = handler(false);
-    let request = DropDatabaseRequest {
-        database: String::new(),
-    };
-
-    let response = handler.drop_database(request).await;
-
-    assert!(response.is_err(), "Expected error for empty database name");
-}
-
-#[tokio::test]
 async fn test_lists_tables_cross_database() {
     let handler = handler(false);
 
     let response = handler
-        .list_tables(Some("analytics".into()), None, None, false)
+        .objects(ObjectsRequest {
+            database: Some("analytics".into()),
+            ..Default::default()
+        })
         .await
         .unwrap();
-    let ListEntries::Brief(tables) = response.entries else {
+    let Objects::Brief(tables) = response.objects else {
         panic!("expected brief-mode tables");
     };
 
@@ -432,7 +361,7 @@ async fn test_executes_sql_cross_database() {
     let handler = handler(false);
 
     let response = handler
-        .read_query(
+        .read(
             "SELECT * FROM events ORDER BY id".into(),
             Some("analytics".into()),
             None,
@@ -447,8 +376,14 @@ async fn test_executes_sql_cross_database() {
 async fn test_lists_databases_includes_cross_db() {
     let handler = handler(false);
 
-    let response = handler.list_databases(ListDatabasesRequest::default()).await.unwrap();
-    let dbs = response.databases;
+    let response = handler
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Database,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let dbs = response.objects.into_brief().expect("database names");
 
     assert!(
         dbs.iter().any(|db| db == "analytics"),
@@ -461,7 +396,7 @@ async fn test_blocks_writes_cross_database_in_read_only_mode() {
     let handler = handler(false);
 
     let response = handler
-        .read_query(
+        .read(
             "INSERT INTO events (name) VALUES ('hack')".into(),
             Some("analytics".into()),
             None,
@@ -480,10 +415,13 @@ async fn test_uses_default_pool_for_matching_database() {
     let handler = handler(false);
 
     let response = handler
-        .list_tables(Some("app".into()), None, None, false)
+        .objects(ObjectsRequest {
+            database: Some("app".into()),
+            ..Default::default()
+        })
         .await
         .unwrap();
-    let ListEntries::Brief(tables) = response.entries else {
+    let Objects::Brief(tables) = response.objects else {
         panic!("expected brief-mode tables");
     };
 
@@ -501,11 +439,11 @@ async fn test_server_timeout_mapped_under_zero() {
     }
     let handler = single_connection_handler(0);
     handler
-        .write_query("SET SESSION max_statement_time = 1".into(), None)
+        .write("SET SESSION max_statement_time = 1".into(), None)
         .await
         .expect("session timeout set");
 
-    let result = handler.read_query(slow_sql("qt_mapped_zero"), None, None, None).await;
+    let result = handler.read(slow_sql("qt_mapped_zero"), None, None, None).await;
     assert_timed_out(&handler, result, "qt_mapped_zero").await;
 }
 
@@ -536,7 +474,7 @@ async fn test_read_query_timeout_sets_session_timeout() {
         _ => "max_execution_time",
     };
     let response = handler
-        .read_query(format!("SELECT @@SESSION.{variable} AS v"), None, None, Some(7))
+        .read(format!("SELECT @@SESSION.{variable} AS v"), None, None, Some(7))
         .await
         .expect("session variable query");
     let value = &response.rows[0]["v"];
@@ -560,12 +498,12 @@ async fn test_read_query_timeout_above_cap_is_rejected() {
         ..base_db_config(true)
     });
     let err = handler
-        .read_query("SELECT 1".into(), None, None, Some(11))
+        .read("SELECT 1".into(), None, None, Some(11))
         .await
         .expect_err("above the cap");
     assert_eq!(err.message, "timeout 11s exceeds the maximum of 10s");
     let err = handler
-        .read_query("SELECT 1".into(), None, None, Some(0))
+        .read("SELECT 1".into(), None, None, Some(0))
         .await
         .expect_err("zero");
     assert_eq!(err.message, "timeout must be at least 1 second");
@@ -579,7 +517,7 @@ async fn test_explain_query_timeout_above_cap_is_rejected() {
         ..base_db_config(true)
     });
     let err = handler
-        .explain_query(None, "SELECT 1".into(), false, Some(11))
+        .explain(None, "SELECT 1".into(), false, Some(11))
         .await
         .expect_err("above the cap");
     assert_eq!(err.message, "timeout 11s exceeds the maximum of 10s");
@@ -593,7 +531,7 @@ async fn test_query_timeout_zero_leaves_server_defaults() {
     });
     assert!(session_timeout(&handler).await.abs() < f64::EPSILON);
 
-    let response = handler.read_query("SELECT 1 AS value".into(), None, None, None).await;
+    let response = handler.read("SELECT 1 AS value".into(), None, None, None).await;
     assert!(response.is_ok(), "Fast query should succeed without timeout");
 }
 
@@ -601,7 +539,7 @@ async fn test_query_timeout_zero_leaves_server_defaults() {
 async fn test_server_timeout_stops_slow_read() {
     let handler = single_connection_handler(1);
     let start = std::time::Instant::now();
-    let result = handler.read_query(slow_sql("qt_server_read"), None, None, None).await;
+    let result = handler.read(slow_sql("qt_server_read"), None, None, None).await;
     let elapsed = start.elapsed();
     assert!(elapsed.as_secs_f64() < 6.0, "server timeout took {elapsed:?}");
     assert_timed_out(&handler, result, "qt_server_read").await;
@@ -619,7 +557,7 @@ async fn test_server_timeout_stops_slow_write() {
         slow_sql("qt_server_write")
     );
     let start = std::time::Instant::now();
-    let result = handler.write_query(sql, None).await;
+    let result = handler.write(sql, None).await;
     let elapsed = start.elapsed();
     assert!(elapsed.as_secs_f64() < 6.0, "server timeout took {elapsed:?}");
     assert_timed_out(&handler, result, "qt_server_write").await;
@@ -637,7 +575,7 @@ async fn test_backstop_kills_statement_outside_server_timeout() {
                information_schema.columns b, information_schema.columns c)"
         .to_owned();
     let start = std::time::Instant::now();
-    let result = handler.write_query(sql, None).await;
+    let result = handler.write(sql, None).await;
     let secs = start.elapsed().as_secs_f64();
     assert!((6.0..9.0).contains(&secs), "backstop fired after {secs:.1}s");
     assert_timed_out(&handler, result, "qt_backstop_do").await;
@@ -656,85 +594,10 @@ async fn test_backstop_kills_statement_when_session_set_fails() {
         ..single_connection_config(1)
     });
     let start = std::time::Instant::now();
-    let result = handler
-        .read_query(slow_sql("qt_backstop_mismatch"), None, None, None)
-        .await;
+    let result = handler.read(slow_sql("qt_backstop_mismatch"), None, None, None).await;
     let secs = start.elapsed().as_secs_f64();
     assert!((1.0..3.0).contains(&secs), "backstop fired after {secs:.1}s");
     assert_timed_out(&handler, result, "qt_backstop_mismatch").await;
-}
-
-#[tokio::test]
-async fn test_drop_table_success() {
-    let handler = handler(false);
-
-    // Create a temporary table
-    handler
-        .write_query(
-            "CREATE TABLE drop_test_simple (id INT PRIMARY KEY)".into(),
-            Some("app".into()),
-        )
-        .await
-        .unwrap();
-
-    // Drop it
-    let response = handler
-        .drop_table(Some("app".into()), "drop_test_simple".into())
-        .await
-        .unwrap();
-    assert!(response.message.contains("dropped successfully"));
-
-    // Verify it's gone
-    let response = handler
-        .list_tables(Some("app".into()), None, None, false)
-        .await
-        .unwrap();
-    let ListEntries::Brief(tables) = response.entries else {
-        panic!("expected brief-mode tables");
-    };
-    assert!(
-        !tables.iter().any(|t| t == "drop_test_simple"),
-        "Table should not exist after drop"
-    );
-}
-
-#[tokio::test]
-async fn test_drop_table_fk_error() {
-    let handler = handler(false);
-
-    // Create parent and child tables with FK
-    handler
-        .write_query(
-            "CREATE TABLE drop_test_parent (id INT PRIMARY KEY) ENGINE=InnoDB".into(),
-            Some("app".into()),
-        )
-        .await
-        .unwrap();
-
-    handler.write_query("CREATE TABLE drop_test_child (id INT PRIMARY KEY, parent_id INT, FOREIGN KEY (parent_id) REFERENCES drop_test_parent(id)) ENGINE=InnoDB".into(), Some("app".into())).await.unwrap();
-
-    // Attempt to drop parent — should fail due to FK
-    let response = handler.drop_table(Some("app".into()), "drop_test_parent".into()).await;
-    assert!(response.is_err(), "Expected FK constraint error");
-
-    // Clean up
-    handler
-        .write_query("DROP TABLE drop_test_child".into(), Some("app".into()))
-        .await
-        .unwrap();
-
-    handler
-        .write_query("DROP TABLE drop_test_parent".into(), Some("app".into()))
-        .await
-        .unwrap();
-}
-
-#[tokio::test]
-async fn test_drop_table_invalid_identifier() {
-    let handler = handler(false);
-
-    let response = handler.drop_table(Some("app".into()), String::new()).await;
-    assert!(response.is_err(), "Expected error for empty table name");
 }
 
 #[tokio::test]
@@ -742,7 +605,7 @@ async fn test_explain_query_select() {
     let handler = handler(false);
 
     let response = handler
-        .explain_query(Some("app".into()), "SELECT * FROM users".into(), false, None)
+        .explain(Some("app".into()), "SELECT * FROM users".into(), false, None)
         .await
         .unwrap();
     let plan = &response.rows;
@@ -753,7 +616,7 @@ async fn test_explain_query_select() {
 async fn test_explain_query_analyze_write_blocked() {
     for read_only in [true, false] {
         let response = handler(read_only)
-            .explain_query(
+            .explain(
                 Some("app".into()),
                 "INSERT INTO users (name, email) VALUES ('x', 'x@x.com')".into(),
                 true,
@@ -774,13 +637,16 @@ async fn test_list_tables_nonexistent_database_returns_empty() {
     // MySQL queries information_schema.TABLES — a nonexistent schema returns
     // zero rows rather than an error.
     let response = handler
-        .list_tables(Some("nonexistent_db_xyz".into()), None, None, false)
+        .objects(ObjectsRequest {
+            database: Some("nonexistent_db_xyz".into()),
+            ..Default::default()
+        })
         .await
         .unwrap();
     assert!(
-        response.entries.is_empty(),
+        response.objects.is_empty(),
         "Nonexistent database should return empty table list, got: {:?}",
-        response.entries
+        response.objects
     );
 }
 
@@ -789,10 +655,13 @@ async fn test_list_tables_empty_database_falls_back_to_default() {
     let handler = handler(false);
 
     let response = handler
-        .list_tables(Some(String::new()), None, None, false)
+        .objects(ObjectsRequest {
+            database: Some(String::new()),
+            ..Default::default()
+        })
         .await
         .expect("empty db should default to --db-name");
-    let tables = response.entries.as_brief().expect("brief-mode tables");
+    let tables = response.objects.as_brief().expect("brief-mode tables");
     assert!(
         tables.iter().any(|t| t == "users"),
         "expected default-database tables, got {tables:?}",
@@ -804,10 +673,10 @@ async fn test_list_tables_omitted_database_falls_back_to_default() {
     let handler = handler(false);
 
     let response = handler
-        .list_tables(None, None, None, false)
+        .objects(ObjectsRequest::default())
         .await
         .expect("omitted db should default to --db-name");
-    let tables = response.entries.as_brief().expect("brief-mode tables");
+    let tables = response.objects.as_brief().expect("brief-mode tables");
     assert!(
         tables.iter().any(|t| t == "users"),
         "expected default-database tables, got {tables:?}",
@@ -815,35 +684,11 @@ async fn test_list_tables_omitted_database_falls_back_to_default() {
 }
 
 #[tokio::test]
-async fn test_create_database_already_exists() {
-    let handler = handler(false);
-    let request = CreateDatabaseRequest { database: "app".into() };
-
-    let response = handler.create_database(request).await.unwrap();
-    assert!(
-        response.message.contains("already exists"),
-        "Expected 'already exists' message, got: {}",
-        response.message
-    );
-}
-
-#[tokio::test]
-async fn test_create_database_invalid_identifier() {
-    let handler = handler(false);
-    let request = CreateDatabaseRequest {
-        database: String::new(),
-    };
-
-    let response = handler.create_database(request).await;
-    assert!(response.is_err(), "Expected error for empty database name");
-}
-
-#[tokio::test]
 async fn test_explain_query_analyze() {
     let handler = handler(false);
 
     let response = handler
-        .explain_query(Some("app".into()), "SELECT * FROM users".into(), true, None)
+        .explain(Some("app".into()), "SELECT * FROM users".into(), true, None)
         .await
         .expect("analyze should return a plan");
     let [row] = response.rows.as_slice() else {
@@ -863,7 +708,7 @@ async fn test_explain_query_plain_write_blocked() {
     // Every EXPLAIN runs in a read-only transaction, which rejects write statements.
     for read_only in [true, false] {
         let response = handler(read_only)
-            .explain_query(
+            .explain(
                 Some("app".into()),
                 "INSERT INTO users (name, email) VALUES ('x', 'x@x.com')".into(),
                 false,
@@ -882,7 +727,7 @@ async fn test_explain_query_multi_statement_blocked_read_only() {
     let handler = handler(true);
 
     let response = handler
-        .explain_query(
+        .explain(
             Some("app".into()),
             "SELECT 1; CREATE TABLE readonly_probe_explain(i int)".into(),
             false,
@@ -899,7 +744,7 @@ async fn test_explain_query_multi_statement_blocked_read_only() {
     );
 
     let rows = handler
-        .read_query(
+        .read(
             "SELECT COUNT(*) AS n FROM information_schema.tables \
              WHERE table_schema = 'app' AND table_name = 'readonly_probe_explain'"
                 .into(),
@@ -917,7 +762,7 @@ async fn test_explain_query_invalid_query() {
     let handler = handler(false);
 
     let response = handler
-        .explain_query(Some("app".into()), "NOT VALID SQL AT ALL".into(), false, None)
+        .explain(Some("app".into()), "NOT VALID SQL AT ALL".into(), false, None)
         .await;
     assert!(response.is_err(), "Expected error for invalid SQL");
 }
@@ -926,7 +771,7 @@ async fn test_explain_query_invalid_query() {
 async fn test_read_query_empty_query() {
     let handler = handler(false);
 
-    let response = handler.read_query(String::new(), Some("app".into()), None, None).await;
+    let response = handler.read(String::new(), Some("app".into()), None, None).await;
     assert!(response.is_err(), "Expected error for empty query");
 }
 
@@ -934,9 +779,7 @@ async fn test_read_query_empty_query() {
 async fn test_read_query_whitespace_only_query() {
     let handler = handler(false);
 
-    let response = handler
-        .read_query("   \t\n  ".into(), Some("app".into()), None, None)
-        .await;
+    let response = handler.read("   \t\n  ".into(), Some("app".into()), None, None).await;
     assert!(response.is_err(), "Expected error for whitespace-only query");
 }
 
@@ -945,7 +788,7 @@ async fn test_read_query_multi_statement_blocked() {
     let handler = handler(false);
 
     let response = handler
-        .read_query("SELECT 1; DROP TABLE users".into(), Some("app".into()), None, None)
+        .read("SELECT 1; DROP TABLE users".into(), Some("app".into()), None, None)
         .await;
     assert!(response.is_err(), "Expected error for multi-statement query");
 }
@@ -955,7 +798,7 @@ async fn test_read_query_load_file_blocked() {
     let handler = handler(false);
 
     let response = handler
-        .read_query("SELECT LOAD_FILE('/etc/passwd')".into(), Some("app".into()), None, None)
+        .read("SELECT LOAD_FILE('/etc/passwd')".into(), Some("app".into()), None, None)
         .await;
     assert!(response.is_err(), "Expected error for LOAD_FILE");
 }
@@ -967,7 +810,7 @@ async fn test_read_query_explain_analyze_write_blocked() {
         "EXPLAIN ANALYZE DELETE FROM users WHERE id < 0",
         "EXPLAIN DELETE FROM users WHERE id < 0",
     ] {
-        let response = handler.read_query(sql.into(), Some("app".into()), None, None).await;
+        let response = handler.read(sql.into(), Some("app".into()), None, None).await;
         let err_msg = format!(
             "{:?}",
             response.expect_err("Expected EXPLAIN ANALYZE write to be blocked")
@@ -984,7 +827,7 @@ async fn test_read_query_explain_select_allowed() {
     let handler = handler(false);
 
     let response = handler
-        .read_query("EXPLAIN SELECT * FROM users".into(), Some("app".into()), None, None)
+        .read("EXPLAIN SELECT * FROM users".into(), Some("app".into()), None, None)
         .await
         .unwrap();
     assert!(!response.rows.is_empty(), "Expected a query plan");
@@ -995,7 +838,7 @@ async fn test_read_query_into_outfile_blocked() {
     let handler = handler(false);
 
     let response = handler
-        .read_query(
+        .read(
             "SELECT * FROM users INTO OUTFILE '/tmp/out'".into(),
             Some("app".into()),
             None,
@@ -1010,7 +853,7 @@ async fn test_read_query_show_tables() {
     let handler = handler(false);
 
     let response = handler
-        .read_query("SHOW TABLES".into(), Some("app".into()), None, None)
+        .read("SHOW TABLES".into(), Some("app".into()), None, None)
         .await
         .unwrap();
     let rows = &response.rows;
@@ -1023,7 +866,7 @@ async fn test_read_query_show_charset_and_processlist() {
 
     for sql in ["SHOW CHARSET", "SHOW PROCESSLIST"] {
         let response = handler
-            .read_query(sql.into(), Some("app".into()), None, None)
+            .read(sql.into(), Some("app".into()), None, None)
             .await
             .unwrap_or_else(|error| panic!("{sql} should pass readQuery: {error:?}"));
         assert!(!response.rows.is_empty(), "{sql} should return rows");
@@ -1035,7 +878,7 @@ async fn test_read_query_describe_table() {
     let handler = handler(false);
 
     let response = handler
-        .read_query("DESCRIBE users".into(), Some("app".into()), None, None)
+        .read("DESCRIBE users".into(), Some("app".into()), None, None)
         .await
         .unwrap();
     let rows = &response.rows;
@@ -1043,42 +886,11 @@ async fn test_read_query_describe_table() {
 }
 
 #[tokio::test]
-async fn test_drop_table_nonexistent() {
-    let handler = handler(false);
-
-    let response = handler
-        .drop_table(Some("app".into()), "nonexistent_table_xyz".into())
-        .await;
-    assert!(response.is_err(), "Expected error for nonexistent table");
-}
-
-#[tokio::test]
-async fn test_drop_table_cross_database() {
-    let handler = handler(false);
-
-    // Create a table in the analytics database
-    handler
-        .write_query(
-            "CREATE TABLE drop_cross_test (id INT PRIMARY KEY)".into(),
-            Some("analytics".into()),
-        )
-        .await
-        .unwrap();
-
-    // Drop it from the analytics database
-    let response = handler
-        .drop_table(Some("analytics".into()), "drop_cross_test".into())
-        .await
-        .unwrap();
-    assert!(response.message.contains("dropped successfully"));
-}
-
-#[tokio::test]
 async fn test_write_query_cross_database() {
     let handler = handler(false);
 
     handler
-        .write_query(
+        .write(
             "INSERT INTO events (name, payload) VALUES ('cross_test', '{\"test\":true}')".into(),
             Some("analytics".into()),
         )
@@ -1086,7 +898,7 @@ async fn test_write_query_cross_database() {
         .unwrap();
 
     let rows = handler
-        .read_query(
+        .read(
             "SELECT name FROM events WHERE name = 'cross_test'".into(),
             Some("analytics".into()),
             None,
@@ -1099,7 +911,7 @@ async fn test_write_query_cross_database() {
 
     // Clean up
     handler
-        .write_query(
+        .write(
             "DELETE FROM events WHERE name = 'cross_test'".into(),
             Some("analytics".into()),
         )
@@ -1112,7 +924,7 @@ async fn test_read_query_empty_result_set() {
     let handler = handler(false);
 
     let response = handler
-        .read_query(
+        .read(
             "SELECT * FROM users WHERE email = 'nobody@nowhere.com'".into(),
             Some("app".into()),
             None,
@@ -1130,7 +942,7 @@ async fn test_read_query_null_values() {
     // posts.body can be NULL, and published defaults to 0
 
     let response = handler
-        .read_query(
+        .read(
             "SELECT title, body FROM posts WHERE title = 'My First Post'".into(),
             Some("app".into()),
             None,
@@ -1149,7 +961,7 @@ async fn test_read_query_aggregate() {
     let handler = handler(false);
 
     let response = handler
-        .read_query(
+        .read(
             "SELECT COUNT(*) AS total FROM users".into(),
             Some("app".into()),
             None,
@@ -1167,7 +979,7 @@ async fn test_read_query_group_by() {
     let handler = handler(false);
 
     let response = handler
-        .read_query(
+        .read(
             "SELECT user_id, COUNT(*) AS post_count FROM posts GROUP BY user_id ORDER BY user_id".into(),
             Some("app".into()),
             None,
@@ -1185,7 +997,7 @@ async fn test_read_query_use_statement_rejected() {
     let handler = single_connection_handler(0);
 
     let error = handler
-        .read_query("USE analytics".into(), Some("app".into()), None, None)
+        .read("USE analytics".into(), Some("app".into()), None, None)
         .await
         .expect_err("USE must be rejected by readQuery");
     assert!(
@@ -1195,7 +1007,7 @@ async fn test_read_query_use_statement_rejected() {
     );
 
     let response = handler
-        .read_query("SELECT DATABASE() AS db".into(), None, None, None)
+        .read("SELECT DATABASE() AS db".into(), None, None, None)
         .await
         .expect("SELECT DATABASE() runs");
     assert_eq!(response.rows[0]["db"], "app", "default database must stay `app`");
@@ -1207,7 +1019,7 @@ async fn test_read_query_show_warnings_rejected() {
     let handler = single_connection_handler(0);
 
     handler
-        .read_query(
+        .read(
             "SELECT abs(ssn) AS a FROM users WHERE ssn IS NOT NULL LIMIT 1".into(),
             Some("app".into()),
             None,
@@ -1218,7 +1030,7 @@ async fn test_read_query_show_warnings_rejected() {
 
     for sql in ["SHOW WARNINGS", "SHOW ERRORS", "SHOW COUNT(*) WARNINGS"] {
         let error = handler
-            .read_query(sql.into(), Some("app".into()), None, None)
+            .read(sql.into(), Some("app".into()), None, None)
             .await
             .expect_err("diagnostics must be rejected by readQuery");
         assert!(
@@ -1236,7 +1048,7 @@ async fn test_read_query_show_warnings_rejected() {
         "SHOW # \0\nWARNINGS",
     ] {
         let error = handler
-            .read_query(sql.into(), Some("app".into()), None, None)
+            .read(sql.into(), Some("app".into()), None, None)
             .await
             .expect_err("a comment the server reads otherwise must not hide diagnostics");
         assert!(
@@ -1256,7 +1068,7 @@ async fn test_executable_comments_rejected() {
 
     for sql in [smuggled, "SHOW /*!99999 TABLES */ WARNINGS"] {
         let error = handler
-            .read_query(sql.into(), Some("app".into()), None, None)
+            .read(sql.into(), Some("app".into()), None, None)
             .await
             .expect_err("readQuery must reject executable comments");
         assert!(
@@ -1267,7 +1079,7 @@ async fn test_executable_comments_rejected() {
     }
     for analyze in [false, true] {
         let error = handler
-            .explain_query(Some("app".into()), smuggled.into(), analyze, None)
+            .explain(Some("app".into()), smuggled.into(), analyze, None)
             .await
             .expect_err("explainQuery must reject executable comments");
         assert!(
@@ -1278,7 +1090,7 @@ async fn test_executable_comments_rejected() {
     }
 
     let rows = handler
-        .read_query(
+        .read(
             "SELECT COUNT(*) AS n FROM information_schema.tables \
              WHERE table_schema = 'app' AND table_name = 'readonly_probe_comment'"
                 .into(),
@@ -1297,7 +1109,7 @@ async fn test_write_query_use_statement_rejected() {
     let handler = single_connection_handler(0);
 
     let error = handler
-        .write_query("USE analytics".into(), Some("app".into()))
+        .write("USE analytics".into(), Some("app".into()))
         .await
         .expect_err("USE must be rejected by writeQuery");
     assert!(
@@ -1308,7 +1120,7 @@ async fn test_write_query_use_statement_rejected() {
 
     // A comment the server reads otherwise must not hide a USE.
     let error = handler
-        .write_query("SELECT 1 --\u{a0}; USE analytics".into(), Some("app".into()))
+        .write("SELECT 1 --\u{a0}; USE analytics".into(), Some("app".into()))
         .await
         .expect_err("a hidden USE must be rejected by writeQuery");
     assert!(
@@ -1320,7 +1132,7 @@ async fn test_write_query_use_statement_rejected() {
     );
 
     let response = handler
-        .read_query("SELECT DATABASE() AS db".into(), None, None, None)
+        .read("SELECT DATABASE() AS db".into(), None, None, None)
         .await
         .expect("SELECT DATABASE() runs");
     assert_eq!(response.rows[0]["db"], "app", "default database must stay `app`");
@@ -1331,7 +1143,7 @@ async fn test_read_query_show_databases() {
     let handler = handler(false);
 
     let response = handler
-        .read_query("SHOW DATABASES".into(), Some("app".into()), None, None)
+        .read("SHOW DATABASES".into(), Some("app".into()), None, None)
         .await
         .unwrap();
     let rows = &response.rows;
@@ -1343,7 +1155,7 @@ async fn test_explain_query_cross_database() {
     let handler = handler(false);
 
     let response = handler
-        .explain_query(Some("analytics".into()), "SELECT * FROM events".into(), false, None)
+        .explain(Some("analytics".into()), "SELECT * FROM events".into(), false, None)
         .await
         .unwrap();
     let plan = &response.rows;
@@ -1355,7 +1167,7 @@ async fn test_read_query_with_comments() {
     let handler = handler(false);
 
     let response = handler
-        .read_query(
+        .read(
             "/* fetch users */ SELECT * FROM users ORDER BY id".into(),
             Some("app".into()),
             None,
@@ -1372,7 +1184,7 @@ async fn test_read_query_subquery() {
     let handler = handler(false);
 
     let response = handler
-        .read_query(
+        .read(
             "SELECT * FROM users WHERE id IN (SELECT user_id FROM posts WHERE published = 1)".into(),
             Some("app".into()),
             None,
@@ -1389,7 +1201,7 @@ async fn test_read_query_with_join() {
     let handler = handler(false);
 
     let response = handler
-        .read_query(
+        .read(
             "SELECT p.title, u.name FROM posts p JOIN users u ON p.user_id = u.id ORDER BY p.id".into(),
             Some("app".into()),
             None,
@@ -1406,7 +1218,7 @@ async fn test_read_query_with_join() {
 #[tokio::test]
 async fn test_explain_query_analyze_select_allowed_in_read_only() {
     let response = handler(true)
-        .explain_query(Some("app".into()), "SELECT * FROM users".into(), true, None)
+        .explain(Some("app".into()), "SELECT * FROM users".into(), true, None)
         .await
         .expect("analyze of a SELECT should succeed in read-only mode");
     assert!(!response.rows.is_empty(), "expected a plan");
@@ -1416,9 +1228,7 @@ async fn test_explain_query_analyze_select_allowed_in_read_only() {
 async fn test_write_query_invalid_sql() {
     let handler = handler(false);
 
-    let response = handler
-        .write_query("NOT VALID SQL AT ALL".into(), Some("app".into()))
-        .await;
+    let response = handler.write("NOT VALID SQL AT ALL".into(), Some("app".into())).await;
     assert!(response.is_err(), "Expected error for invalid SQL in write_query");
 }
 
@@ -1427,7 +1237,7 @@ async fn test_read_query_with_limit() {
     let handler = handler(false);
 
     let response = handler
-        .read_query(
+        .read(
             "SELECT * FROM users ORDER BY id LIMIT 2".into(),
             Some("app".into()),
             None,
@@ -1440,30 +1250,11 @@ async fn test_read_query_with_limit() {
 }
 
 #[tokio::test]
-async fn test_drop_table_empty_database_falls_back_to_default() {
-    let handler = handler(false);
-
-    handler
-        .write_query(
-            "CREATE TABLE drop_default_my (id INT PRIMARY KEY)".into(),
-            Some("app".into()),
-        )
-        .await
-        .expect("seed table");
-
-    let response = handler
-        .drop_table(Some(String::new()), "drop_default_my".into())
-        .await
-        .expect("empty db should default to --db-name");
-    assert!(response.message.contains("dropped successfully"));
-}
-
-#[tokio::test]
 async fn test_read_query_with_line_comment() {
     let handler = handler(false);
 
     let response = handler
-        .read_query(
+        .read(
             "-- get users\nSELECT * FROM users ORDER BY id".into(),
             Some("app".into()),
             None,
@@ -1480,7 +1271,7 @@ async fn test_read_query_into_dumpfile_blocked() {
     let handler = handler(false);
 
     let response = handler
-        .read_query(
+        .read(
             "SELECT * FROM users INTO DUMPFILE '/tmp/out'".into(),
             Some("app".into()),
             None,
@@ -1490,56 +1281,6 @@ async fn test_read_query_into_dumpfile_blocked() {
     assert!(response.is_err(), "Expected error for INTO DUMPFILE");
 }
 
-#[tokio::test]
-async fn test_create_database_blocked_in_read_only() {
-    let handler = handler(true);
-    let request = CreateDatabaseRequest {
-        database: "should_not_create".into(),
-    };
-
-    let response = handler.create_database(request).await;
-    assert!(response.is_err(), "create_database should be blocked in read-only mode");
-}
-
-#[tokio::test]
-async fn test_drop_database_blocked_in_read_only() {
-    let handler = handler(true);
-    let request = DropDatabaseRequest { database: "app".into() };
-
-    let response = handler.drop_database(request).await;
-    assert!(response.is_err(), "drop_database should be blocked in read-only mode");
-}
-
-#[tokio::test]
-async fn test_drop_table_blocked_in_read_only() {
-    let handler = handler(true);
-
-    let response = handler.drop_table(Some("app".into()), "users".into()).await;
-    assert!(response.is_err(), "drop_table should be blocked in read-only mode");
-}
-
-#[tokio::test]
-async fn test_create_drop_database_with_double_quote() {
-    let handler = handler(false);
-    let db_name = "test_quote_db\"edge".to_string();
-
-    let create = CreateDatabaseRequest {
-        database: db_name.clone(),
-    };
-    let result = handler.create_database(create).await;
-    assert!(
-        result.is_ok(),
-        "create database with double-quote should succeed: {result:?}"
-    );
-
-    let drop = DropDatabaseRequest { database: db_name };
-    let result = handler.drop_database(drop).await;
-    assert!(
-        result.is_ok(),
-        "drop database with double-quote should succeed: {result:?}"
-    );
-}
-
 const MY_DB: &str = "app";
 
 async fn collect_all_paged(handler: &MysqlHandler) -> Vec<String> {
@@ -1547,10 +1288,14 @@ async fn collect_all_paged(handler: &MysqlHandler) -> Vec<String> {
     let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
         let response = handler
-            .list_tables(Some(MY_DB.into()), cursor.take(), None, false)
+            .objects(ObjectsRequest {
+                database: Some(MY_DB.into()),
+                cursor: cursor.take(),
+                ..Default::default()
+            })
             .await
             .expect("list page");
-        all.extend(response.entries.into_brief().expect("brief-mode page"));
+        all.extend(response.objects.into_brief().expect("brief-mode page"));
         match response.next_cursor {
             Some(c) => cursor = Some(c),
             None => break,
@@ -1567,11 +1312,14 @@ async fn test_list_tables_pagination_traverses_pages() {
     let collected = collect_all_paged(&handler_paged).await;
 
     let single_page = handler_full
-        .list_tables(Some(MY_DB.into()), None, None, false)
+        .objects(ObjectsRequest {
+            database: Some(MY_DB.into()),
+            ..Default::default()
+        })
         .await
         .expect("single page");
 
-    let single_page_tables = single_page.entries.into_brief().expect("brief-mode page");
+    let single_page_tables = single_page.objects.into_brief().expect("brief-mode page");
     assert_eq!(
         collected, single_page_tables,
         "paged traversal must yield identical results (and ordering) to a single full page"
@@ -1584,7 +1332,10 @@ async fn test_list_tables_pagination_traverses_pages() {
 async fn test_list_tables_pagination_small_table_set_no_next_cursor() {
     let handler = handler(true);
     let response = handler
-        .list_tables(Some(MY_DB.into()), None, None, false)
+        .objects(ObjectsRequest {
+            database: Some(MY_DB.into()),
+            ..Default::default()
+        })
         .await
         .unwrap();
     assert!(
@@ -1597,20 +1348,26 @@ async fn test_list_tables_pagination_small_table_set_no_next_cursor() {
 async fn test_list_tables_pagination_boundary_page_size_equals_total() {
     let handler_full = handler(true);
     let total = handler_full
-        .list_tables(Some(MY_DB.into()), None, None, false)
+        .objects(ObjectsRequest {
+            database: Some(MY_DB.into()),
+            ..Default::default()
+        })
         .await
         .expect("discover total")
-        .entries
+        .objects
         .len();
     let page_size = u16::try_from(total).expect("seed total fits in u16");
 
     let handler_boundary = handler_with_page_size(page_size);
     let response = handler_boundary
-        .list_tables(Some(MY_DB.into()), None, None, false)
+        .objects(ObjectsRequest {
+            database: Some(MY_DB.into()),
+            ..Default::default()
+        })
         .await
         .unwrap();
     assert_eq!(
-        response.entries.len(),
+        response.objects.len(),
         total,
         "page_size equal to total must return everything on one page"
     );
@@ -1626,14 +1383,18 @@ async fn test_list_tables_pagination_off_the_end_cursor_returns_empty_page() {
 
     let handler = handler(true);
     let response = handler
-        .list_tables(Some(MY_DB.into()), Some(Cursor { offset: 10_000 }), None, false)
+        .objects(ObjectsRequest {
+            database: Some(MY_DB.into()),
+            cursor: Some(Cursor { offset: 10_000 }),
+            ..Default::default()
+        })
         .await
         .unwrap();
 
     assert!(
-        response.entries.is_empty(),
+        response.objects.is_empty(),
         "off-the-end cursor must return empty tables, got {:?}",
-        response.entries
+        response.objects
     );
     assert!(response.next_cursor.is_none(), "off-the-end must not emit nextCursor");
 }
@@ -1642,10 +1403,13 @@ async fn test_list_tables_pagination_off_the_end_cursor_returns_empty_page() {
 async fn test_list_tables_respects_configured_page_size() {
     let handler = handler_with_page_size(2);
     let first = handler
-        .list_tables(Some(MY_DB.into()), None, None, false)
+        .objects(ObjectsRequest {
+            database: Some(MY_DB.into()),
+            ..Default::default()
+        })
         .await
         .expect("first page");
-    assert_eq!(first.entries.len(), 2, "configured page_size=2 must cap page 1");
+    assert_eq!(first.objects.len(), 2, "configured page_size=2 must cap page 1");
     assert!(
         first.next_cursor.is_some(),
         "page 1 must emit nextCursor when total > page_size"
@@ -1656,10 +1420,13 @@ async fn test_list_tables_respects_configured_page_size() {
 async fn test_list_tables_respects_configured_page_size_minimum() {
     let handler = handler_with_page_size(1);
     let first = handler
-        .list_tables(Some(MY_DB.into()), None, None, false)
+        .objects(ObjectsRequest {
+            database: Some(MY_DB.into()),
+            ..Default::default()
+        })
         .await
         .expect("first page");
-    assert_eq!(first.entries.len(), 1, "page_size=1 must return one table per page");
+    assert_eq!(first.objects.len(), 1, "page_size=1 must return one table per page");
     assert!(first.next_cursor.is_some(), "page 1 must emit nextCursor");
 }
 
@@ -1667,9 +1434,13 @@ async fn collect_all_paged_databases(handler: &MysqlHandler) -> Vec<String> {
     let mut all = Vec::new();
     let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
-        let request = ListDatabasesRequest { cursor };
-        let response = handler.list_databases(request).await.expect("list page");
-        all.extend(response.databases);
+        let request = ObjectsRequest {
+            kind: ObjectKind::Database,
+            cursor,
+            ..Default::default()
+        };
+        let response = handler.objects(request).await.expect("list page");
+        all.extend(response.objects.into_brief().expect("database names"));
         match response.next_cursor {
             Some(c) => cursor = Some(c),
             None => break,
@@ -1686,12 +1457,16 @@ async fn test_list_databases_pagination_traverses_pages() {
     let collected = collect_all_paged_databases(&handler_paged).await;
 
     let single_page = handler_full
-        .list_databases(ListDatabasesRequest::default())
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Database,
+            ..Default::default()
+        })
         .await
         .expect("single page");
 
     assert_eq!(
-        collected, single_page.databases,
+        collected,
+        single_page.objects.into_brief().expect("database names"),
         "paged traversal must yield identical results (and ordering) to a single full page"
     );
     let unique: std::collections::HashSet<&String> = collected.iter().collect();
@@ -1701,7 +1476,13 @@ async fn test_list_databases_pagination_traverses_pages() {
 #[tokio::test]
 async fn test_list_databases_pagination_small_set_no_next_cursor() {
     let handler = handler(true);
-    let response = handler.list_databases(ListDatabasesRequest::default()).await.unwrap();
+    let response = handler
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Database,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
     assert!(
         response.next_cursor.is_none(),
         "seeded fixture below default page_size must not emit nextCursor"
@@ -1712,20 +1493,28 @@ async fn test_list_databases_pagination_small_set_no_next_cursor() {
 async fn test_list_databases_pagination_boundary_page_size_equals_total() {
     let handler_full = handler(true);
     let total = handler_full
-        .list_databases(ListDatabasesRequest::default())
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Database,
+            ..Default::default()
+        })
         .await
         .expect("discover total")
-        .databases
+        .objects
+        .into_brief()
+        .expect("database names")
         .len();
     let page_size = u16::try_from(total).expect("seed total fits in u16");
 
     let handler_boundary = handler_with_page_size(page_size);
     let response = handler_boundary
-        .list_databases(ListDatabasesRequest::default())
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Database,
+            ..Default::default()
+        })
         .await
         .unwrap();
     assert_eq!(
-        response.databases.len(),
+        response.objects.len(),
         total,
         "page_size equal to total must return everything on one page"
     );
@@ -1740,15 +1529,17 @@ async fn test_list_databases_pagination_off_the_end_cursor_returns_empty_page() 
     use dbmcp_server::listing::Cursor;
 
     let handler = handler(true);
-    let request = ListDatabasesRequest {
+    let request = ObjectsRequest {
+        kind: ObjectKind::Database,
         cursor: Some(Cursor { offset: 10_000 }),
+        ..Default::default()
     };
-    let response = handler.list_databases(request).await.unwrap();
+    let response = handler.objects(request).await.unwrap();
 
     assert!(
-        response.databases.is_empty(),
+        response.objects.is_empty(),
         "off-the-end cursor must return empty databases, got {:?}",
-        response.databases
+        response.objects.into_brief().expect("database names")
     );
     assert!(response.next_cursor.is_none(), "off-the-end must not emit nextCursor");
 }
@@ -1757,14 +1548,13 @@ async fn test_list_databases_pagination_off_the_end_cursor_returns_empty_page() 
 async fn test_list_databases_respects_configured_page_size() {
     let handler = handler_with_page_size(1);
     let first = handler
-        .list_databases(ListDatabasesRequest::default())
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Database,
+            ..Default::default()
+        })
         .await
         .expect("first page");
-    assert_eq!(
-        first.databases.len(),
-        1,
-        "page_size=1 must return one database per page"
-    );
+    assert_eq!(first.objects.len(), 1, "page_size=1 must return one database per page");
     assert!(
         first.next_cursor.is_some(),
         "page 1 must emit nextCursor when total > page_size"
@@ -1776,7 +1566,7 @@ async fn collect_all_paged_read_query(handler: &MysqlHandler, query: &str) -> Ve
     let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
         let response = handler
-            .read_query(query.into(), Some("app".into()), cursor.take(), None)
+            .read(query.into(), Some("app".into()), cursor.take(), None)
             .await
             .expect("read_query page");
         all.extend(response.rows);
@@ -1797,7 +1587,7 @@ async fn test_read_query_pagination_traverses_pages() {
     let collected = collect_all_paged_read_query(&handler_paged, query).await;
 
     let single = handler_full
-        .read_query(query.into(), Some("app".into()), None, None)
+        .read(query.into(), Some("app".into()), None, None)
         .await
         .expect("single page");
     assert_eq!(
@@ -1815,7 +1605,7 @@ async fn test_read_query_pagination_traverses_pages() {
 async fn test_read_query_pagination_small_result_no_next_cursor() {
     let handler = handler_with_page_size(2);
     let response = handler
-        .read_query(
+        .read(
             "SELECT id FROM users WHERE id = 1".into(),
             Some("app".into()),
             None,
@@ -1834,7 +1624,7 @@ async fn test_read_query_pagination_small_result_no_next_cursor() {
 async fn test_read_query_pagination_empty_result_no_next_cursor() {
     let handler = handler_with_page_size(2);
     let response = handler
-        .read_query(
+        .read(
             "SELECT id FROM users WHERE id = -1".into(),
             Some("app".into()),
             None,
@@ -1850,7 +1640,7 @@ async fn test_read_query_pagination_empty_result_no_next_cursor() {
 async fn test_read_query_pagination_preserves_inner_limit() {
     let handler = handler_with_page_size(2);
     let response = handler
-        .read_query(
+        .read(
             "SELECT id FROM users ORDER BY id LIMIT 1 OFFSET 1".into(),
             Some("app".into()),
             None,
@@ -1873,7 +1663,7 @@ async fn test_read_query_pagination_off_the_end_cursor_returns_empty() {
     use dbmcp_server::listing::Cursor;
     let handler = handler_with_page_size(2);
     let response = handler
-        .read_query(
+        .read(
             "SELECT id FROM users ORDER BY id".into(),
             Some("app".into()),
             Some(Cursor { offset: 10_000 }),
@@ -1892,7 +1682,7 @@ async fn test_read_query_pagination_invalid_cursor_rejected_at_deserialize() {
     let bad_cursors = ["!!!not-base64", "bm90LWpzb24", "eyJ4IjoxfQ", "eyJvZmZzZXQiOi0xfQ"];
 
     for bad in bad_cursors {
-        let err = serde_json::from_value::<dbmcp_server::types::ReadQueryRequest>(json!({
+        let err = serde_json::from_value::<dbmcp_server::types::ReadRequest>(json!({
             "query": "SELECT 1",
             "database": "app",
             "cursor": bad,
@@ -1914,12 +1704,12 @@ async fn test_read_query_non_select_show_tables_single_page() {
     let handler = handler_with_page_size(2);
 
     let without_cursor = handler
-        .read_query("SHOW TABLES".into(), Some("app".into()), None, None)
+        .read("SHOW TABLES".into(), Some("app".into()), None, None)
         .await
         .expect("SHOW TABLES without cursor should succeed");
 
     let with_cursor = handler
-        .read_query(
+        .read(
             "SHOW TABLES".into(),
             Some("app".into()),
             Some(Cursor { offset: 100 }),
@@ -1960,7 +1750,7 @@ async fn test_read_query_non_select_describe_users_single_page() {
     let handler = handler_with_page_size(2);
 
     let response = handler
-        .read_query("DESCRIBE users".into(), Some("app".into()), None, None)
+        .read("DESCRIBE users".into(), Some("app".into()), None, None)
         .await
         .expect("DESCRIBE users should succeed");
 
@@ -1983,7 +1773,7 @@ async fn test_read_query_returns_non_null_temporal_columns() {
     let handler = handler(false);
 
     let response = handler
-        .read_query(
+        .read(
             "SELECT `date`, `time`, `datetime`, `timestamp` FROM temporal WHERE id = 1".into(),
             Some("app".into()),
             None,
@@ -2005,7 +1795,7 @@ async fn test_read_query_temporal_values_beyond_chrono_keep_server_text() {
     let handler = handler(false);
 
     let response = handler
-        .read_query(
+        .read(
             "SELECT `date`, `time`, `datetime`, `timestamp`, SEC_TO_TIME(-3600) AS negative, \
                 TIMEDIFF('2026-01-03 00:00:00', '2026-01-01 00:00:00') AS two_days \
                 FROM temporal WHERE id = 2"
@@ -2035,7 +1825,7 @@ async fn test_read_query_blob_is_base64_varbinary_is_text() {
     let handler = handler(false);
 
     let response = handler
-        .read_query(
+        .read(
             "SELECT `blob`, `varbinary`, `text_bin`, `point` FROM binary_samples WHERE id = 1".into(),
             Some("app".into()),
             None,
@@ -2071,9 +1861,7 @@ async fn test_read_query_vector_is_number_array() {
         ),
     };
 
-    let result = handler(true)
-        .read_query(sql.into(), Some("app".into()), None, None)
-        .await;
+    let result = handler(true).read(sql.into(), Some("app".into()), None, None).await;
 
     if !vector {
         let error = result.expect_err("no VECTOR functions before MySQL 9.0 / MariaDB 11.7");
@@ -2094,7 +1882,7 @@ async fn test_read_query_json_column_shape_per_flavour() {
     });
 
     let response = handler(true)
-        .read_query(
+        .read(
             "SELECT metadata FROM users WHERE name = 'Alice Johnson'".into(),
             Some("app".into()),
             None,
@@ -2120,7 +1908,7 @@ async fn test_read_query_describe_types_are_text() {
     let handler = handler(false);
 
     let response = handler
-        .read_query("DESCRIBE users".into(), Some("app".into()), None, None)
+        .read("DESCRIBE users".into(), Some("app".into()), None, None)
         .await
         .expect("DESCRIBE users should succeed");
 
@@ -2141,11 +1929,15 @@ async fn test_list_views_returns_seeded_views() {
     let handler = handler(true);
 
     let response = handler
-        .list_views(Some("app".into()), None, None, false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::View,
+            database: Some("app".into()),
+            ..Default::default()
+        })
         .await
         .expect("list_views");
 
-    let names = response.entries.as_brief().expect("brief mode");
+    let names = response.objects.as_brief().expect("brief mode");
     assert!(
         names.contains(&"active_users".to_string()),
         "expected seeded active_users view in {names:?}"
@@ -2160,11 +1952,15 @@ async fn test_list_views_returns_seeded_views() {
 async fn test_list_views_excludes_base_tables() {
     let handler = handler(true);
     let response = handler
-        .list_views(Some("app".into()), None, None, false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::View,
+            database: Some("app".into()),
+            ..Default::default()
+        })
         .await
         .expect("list_views");
 
-    let names = response.entries.as_brief().expect("brief mode");
+    let names = response.objects.as_brief().expect("brief mode");
     assert!(
         !names.contains(&"users".to_string()),
         "base table `users` must not appear in listViews, got {names:?}"
@@ -2179,14 +1975,18 @@ async fn test_list_views_excludes_base_tables() {
 async fn test_list_views_empty_for_view_less_database() {
     let handler = handler(true);
     let response = handler
-        .list_views(Some("analytics".into()), None, None, false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::View,
+            database: Some("analytics".into()),
+            ..Default::default()
+        })
         .await
         .expect("list_views");
 
     assert!(
-        response.entries.as_brief().expect("brief").is_empty(),
+        response.objects.as_brief().expect("brief").is_empty(),
         "analytics has no views, got {:?}",
-        response.entries
+        response.objects
     );
 }
 
@@ -2194,13 +1994,17 @@ async fn test_list_views_empty_for_view_less_database() {
 async fn test_list_views_empty_database_falls_back_to_default() {
     let handler = handler(true);
     let response = handler
-        .list_views(Some(String::new()), None, None, false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::View,
+            database: Some(String::new()),
+            ..Default::default()
+        })
         .await
         .expect("empty db should default to --db-name");
     assert!(
-        !response.entries.as_brief().expect("brief").is_empty(),
+        !response.objects.as_brief().expect("brief").is_empty(),
         "default db has seeded views, got {:?}",
-        response.entries
+        response.objects
     );
 }
 
@@ -2208,13 +2012,16 @@ async fn test_list_views_empty_database_falls_back_to_default() {
 async fn test_list_views_omitted_database_falls_back_to_default() {
     let handler = handler(true);
     let response = handler
-        .list_views(None, None, None, false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::View,
+            ..Default::default()
+        })
         .await
         .expect("omitted db should default to --db-name");
     assert!(
-        !response.entries.as_brief().expect("brief").is_empty(),
+        !response.objects.as_brief().expect("brief").is_empty(),
         "default db has seeded views, got {:?}",
-        response.entries
+        response.objects
     );
 }
 
@@ -2227,10 +2034,15 @@ async fn test_list_views_pagination_traverses_pages() {
     let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
         let response = handler_paged
-            .list_views(Some("app".into()), cursor.take(), None, false)
+            .objects(ObjectsRequest {
+                kind: ObjectKind::View,
+                database: Some("app".into()),
+                cursor: cursor.take(),
+                ..Default::default()
+            })
             .await
             .expect("paged list_views");
-        all.extend(response.entries.as_brief().expect("brief").iter().cloned());
+        all.extend(response.objects.as_brief().expect("brief").iter().cloned());
         match response.next_cursor {
             Some(c) => cursor = Some(c),
             None => break,
@@ -2238,11 +2050,16 @@ async fn test_list_views_pagination_traverses_pages() {
     }
 
     let single = handler_full
-        .list_views(Some("app".into()), cursor.take(), None, false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::View,
+            database: Some("app".into()),
+            cursor: cursor.take(),
+            ..Default::default()
+        })
         .await
         .expect("single-page list_views");
 
-    let single_names = single.entries.as_brief().expect("brief").to_vec();
+    let single_names = single.objects.as_brief().expect("brief").to_vec();
     assert_eq!(all, single_names, "paginated traversal should equal single page");
 }
 
@@ -2250,12 +2067,16 @@ async fn test_list_views_pagination_traverses_pages() {
 async fn test_list_views_works_in_read_only_mode() {
     let handler = handler(true);
     let response = handler
-        .list_views(Some("app".into()), None, None, false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::View,
+            database: Some("app".into()),
+            ..Default::default()
+        })
         .await
         .expect("list_views in read-only mode");
 
     assert!(
-        !response.entries.as_brief().expect("brief").is_empty(),
+        !response.objects.as_brief().expect("brief").is_empty(),
         "read-only mode must still allow listViews"
     );
 }
@@ -2264,11 +2085,15 @@ async fn test_list_views_works_in_read_only_mode() {
 async fn test_list_triggers_returns_seeded_triggers() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(Some("app".into()), None, None, false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
+            database: Some("app".into()),
+            ..Default::default()
+        })
         .await
         .expect("list_triggers");
 
-    let names = response.entries.as_brief().expect("brief mode");
+    let names = response.objects.as_brief().expect("brief mode");
     assert!(
         names.contains(&"users_before_insert".to_string()),
         "expected seeded users_before_insert trigger, got {names:?}"
@@ -2283,11 +2108,15 @@ async fn test_list_triggers_returns_seeded_triggers() {
 async fn test_list_triggers_empty_for_trigger_less_database() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(Some("analytics".into()), None, None, false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
+            database: Some("analytics".into()),
+            ..Default::default()
+        })
         .await
         .expect("list_triggers");
 
-    let names = response.entries.as_brief().expect("brief mode");
+    let names = response.objects.as_brief().expect("brief mode");
     assert!(names.is_empty(), "analytics has no triggers, got {names:?}");
 }
 
@@ -2295,13 +2124,17 @@ async fn test_list_triggers_empty_for_trigger_less_database() {
 async fn test_list_triggers_empty_database_falls_back_to_default() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(Some(String::new()), None, None, false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
+            database: Some(String::new()),
+            ..Default::default()
+        })
         .await
         .expect("empty db should default to --db-name");
     assert!(
-        !response.entries.is_empty(),
+        !response.objects.is_empty(),
         "default db has seeded triggers, got {:?}",
-        response.entries
+        response.objects
     );
 }
 
@@ -2309,13 +2142,16 @@ async fn test_list_triggers_empty_database_falls_back_to_default() {
 async fn test_list_triggers_omitted_database_falls_back_to_default() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(None, None, None, false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
+            ..Default::default()
+        })
         .await
         .expect("omitted db should default to --db-name");
     assert!(
-        !response.entries.is_empty(),
+        !response.objects.is_empty(),
         "default db has seeded triggers, got {:?}",
-        response.entries
+        response.objects
     );
 }
 
@@ -2323,12 +2159,16 @@ async fn test_list_triggers_omitted_database_falls_back_to_default() {
 async fn test_list_triggers_works_in_read_only_mode() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(Some("app".into()), None, None, false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
+            database: Some("app".into()),
+            ..Default::default()
+        })
         .await
         .expect("list_triggers in read-only mode");
 
     assert!(
-        !response.entries.is_empty(),
+        !response.objects.is_empty(),
         "read-only mode must still allow listTriggers"
     );
 }
@@ -2337,11 +2177,16 @@ async fn test_list_triggers_works_in_read_only_mode() {
 async fn test_list_triggers_search_filter_returns_only_matches() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(Some("app".into()), None, Some("audit".into()), false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
+            database: Some("app".into()),
+            search: Some("audit".into()),
+            ..Default::default()
+        })
         .await
         .expect("list_triggers");
 
-    let names = response.entries.as_brief().expect("brief mode");
+    let names = response.objects.as_brief().expect("brief mode");
     let expected = [
         "posts_audit_after_delete".to_string(),
         "posts_audit_after_insert".to_string(),
@@ -2355,25 +2200,40 @@ async fn test_list_triggers_search_filter_returns_only_matches() {
 async fn test_list_triggers_search_is_case_insensitive() {
     let handler = handler(true);
     let upper = handler
-        .list_triggers(Some("app".into()), None, Some("AUDIT".into()), false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
+            database: Some("app".into()),
+            search: Some("AUDIT".into()),
+            ..Default::default()
+        })
         .await
         .expect("upper");
     let lower = handler
-        .list_triggers(Some("app".into()), None, Some("audit".into()), false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
+            database: Some("app".into()),
+            search: Some("audit".into()),
+            ..Default::default()
+        })
         .await
         .expect("lower");
-    assert_eq!(upper.entries.as_brief(), lower.entries.as_brief());
+    assert_eq!(upper.objects.as_brief(), lower.objects.as_brief());
 }
 
 #[tokio::test]
 async fn test_list_triggers_search_no_match_returns_empty() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(Some("app".into()), None, Some("nonexistent_trigger_xyz".into()), false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
+            database: Some("app".into()),
+            search: Some("nonexistent_trigger_xyz".into()),
+            ..Default::default()
+        })
         .await
         .expect("list_triggers");
 
-    assert!(response.entries.as_brief().expect("brief").is_empty());
+    assert!(response.objects.as_brief().expect("brief").is_empty());
     assert!(response.next_cursor.is_none());
 }
 
@@ -2384,14 +2244,24 @@ async fn test_list_triggers_search_supports_wildcard_semantics() {
     // same match set.
     let handler = handler(true);
     let plain = handler
-        .list_triggers(Some("app".into()), None, Some("audit".into()), false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
+            database: Some("app".into()),
+            search: Some("audit".into()),
+            ..Default::default()
+        })
         .await
         .expect("plain");
     let with_wildcard = handler
-        .list_triggers(Some("app".into()), None, Some("%audit%".into()), false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
+            database: Some("app".into()),
+            search: Some("%audit%".into()),
+            ..Default::default()
+        })
         .await
         .expect("wildcard");
-    assert_eq!(plain.entries.as_brief(), with_wildcard.entries.as_brief());
+    assert_eq!(plain.objects.as_brief(), with_wildcard.objects.as_brief());
 }
 
 #[tokio::test]
@@ -2399,12 +2269,17 @@ async fn test_list_triggers_search_sql_meta_payloads_are_safe() {
     let handler = handler(true);
     for payload in ["'", ";", "--", "\\", "`", "/* */"] {
         let response = handler
-            .list_triggers(Some("app".into()), None, Some(payload.into()), false)
+            .objects(ObjectsRequest {
+                kind: ObjectKind::Trigger,
+                database: Some("app".into()),
+                search: Some(payload.into()),
+                ..Default::default()
+            })
             .await
             .unwrap_or_else(|e| panic!("list_triggers failed for payload {payload:?}: {e:?}"));
 
         assert!(
-            response.entries.as_brief().is_some(),
+            response.objects.as_brief().is_some(),
             "payload {payload:?} returned non-brief shape"
         );
     }
@@ -2417,10 +2292,16 @@ async fn test_list_triggers_search_paginates_filtered_results() {
     let mut cursor = None;
     loop {
         let response = paged
-            .list_triggers(Some("app".into()), cursor.take(), Some("audit".into()), false)
+            .objects(ObjectsRequest {
+                kind: ObjectKind::Trigger,
+                database: Some("app".into()),
+                cursor: cursor.take(),
+                search: Some("audit".into()),
+                ..Default::default()
+            })
             .await
             .expect("list_triggers paginated");
-        let names = response.entries.as_brief().expect("brief").to_vec();
+        let names = response.objects.as_brief().expect("brief").to_vec();
         all.extend(names);
         cursor = response.next_cursor;
         if cursor.is_none() {
@@ -2429,12 +2310,17 @@ async fn test_list_triggers_search_paginates_filtered_results() {
     }
 
     let single = handler(true)
-        .list_triggers(Some("app".into()), None, Some("audit".into()), false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
+            database: Some("app".into()),
+            search: Some("audit".into()),
+            ..Default::default()
+        })
         .await
         .expect("single-page list_triggers");
     assert_eq!(
         all,
-        single.entries.as_brief().expect("brief"),
+        single.objects.as_brief().expect("brief"),
         "paginated traversal should equal single-page result"
     );
 }
@@ -2443,20 +2329,34 @@ async fn test_list_triggers_search_paginates_filtered_results() {
 async fn test_list_triggers_search_empty_is_same_as_no_filter() {
     let handler = handler(true);
     let no_filter = handler
-        .list_triggers(Some("app".into()), None, None, false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
+            database: Some("app".into()),
+            ..Default::default()
+        })
         .await
         .expect("no filter");
     let empty = handler
-        .list_triggers(Some("app".into()), None, Some(String::new()), false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
+            database: Some("app".into()),
+            search: Some(String::new()),
+            ..Default::default()
+        })
         .await
         .expect("empty filter");
     let whitespace = handler
-        .list_triggers(Some("app".into()), None, Some("   ".into()), false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
+            database: Some("app".into()),
+            search: Some("   ".into()),
+            ..Default::default()
+        })
         .await
         .expect("whitespace");
 
-    assert_eq!(no_filter.entries.as_brief(), empty.entries.as_brief());
-    assert_eq!(no_filter.entries.as_brief(), whitespace.entries.as_brief());
+    assert_eq!(no_filter.objects.as_brief(), empty.objects.as_brief());
+    assert_eq!(no_filter.objects.as_brief(), whitespace.objects.as_brief());
 }
 
 #[tokio::test]
@@ -2468,13 +2368,17 @@ async fn test_list_triggers_arbitrary_database_identifier_is_bound_as_literal() 
     let handler = handler(true);
     for bound in ["shop;DROP", "shop'", "shop\"", "shop`"] {
         let result = handler
-            .list_triggers(Some(bound.into()), None, None, false)
+            .objects(ObjectsRequest {
+                kind: ObjectKind::Trigger,
+                database: Some(bound.into()),
+                ..Default::default()
+            })
             .await
             .unwrap_or_else(|e| panic!("expected bound-literal handling, got error: {e:?} for {bound:?}"));
         assert!(
-            result.entries.as_brief().expect("brief").is_empty(),
+            result.objects.as_brief().expect("brief").is_empty(),
             "non-existent schema {bound:?} should return empty list, got {:?}",
-            result.entries
+            result.objects
         );
     }
 }
@@ -2483,13 +2387,19 @@ async fn test_list_triggers_arbitrary_database_identifier_is_bound_as_literal() 
 async fn test_list_triggers_detailed_returns_keyed_object_with_all_fields() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(Some("app".into()), None, Some("posts_audit_after_insert".into()), true)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
+            database: Some("app".into()),
+            search: Some("posts_audit_after_insert".into()),
+            detail: Detail::Full,
+            ..Default::default()
+        })
         .await
         .expect("list_triggers");
 
-    let entries = response.entries.as_detailed().expect("detailed mode");
-    assert_eq!(entries.len(), 1, "expected one match, got {entries:?}");
-    let entry = entries
+    let objects = response.objects.as_detailed().expect("detailed mode");
+    assert_eq!(objects.len(), 1, "expected one match, got {objects:?}");
+    let entry = objects
         .get("posts_audit_after_insert")
         .expect("posts_audit_after_insert key present");
 
@@ -2540,12 +2450,18 @@ async fn test_list_triggers_detailed_returns_keyed_object_with_all_fields() {
 async fn test_list_triggers_detailed_definition_uses_canonical_definer_form() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(Some("app".into()), None, Some("posts_audit_after_insert".into()), true)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
+            database: Some("app".into()),
+            search: Some("posts_audit_after_insert".into()),
+            detail: Detail::Full,
+            ..Default::default()
+        })
         .await
         .expect("list_triggers");
 
-    let entries = response.entries.as_detailed().expect("detailed mode");
-    let entry = entries.get("posts_audit_after_insert").expect("entry present");
+    let objects = response.objects.as_detailed().expect("detailed mode");
+    let entry = objects.get("posts_audit_after_insert").expect("entry present");
     let definition = entry
         .get("definition")
         .and_then(Value::as_str)
@@ -2585,11 +2501,17 @@ async fn test_list_triggers_detailed_definition_matches_canonical_create_trigger
     // both engines accept it as a valid `CREATE TRIGGER` body.
     let handler = handler(true);
     let response = handler
-        .list_triggers(Some("app".into()), None, Some("posts_audit_after_insert".into()), true)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
+            database: Some("app".into()),
+            search: Some("posts_audit_after_insert".into()),
+            detail: Detail::Full,
+            ..Default::default()
+        })
         .await
         .expect("list_triggers");
-    let entries = response.entries.as_detailed().expect("detailed mode");
-    let definition = entries
+    let objects = response.objects.as_detailed().expect("detailed mode");
+    let definition = objects
         .get("posts_audit_after_insert")
         .and_then(|e| e.get("definition"))
         .and_then(Value::as_str)
@@ -2615,18 +2537,24 @@ async fn test_list_triggers_detailed_definition_matches_canonical_create_trigger
 async fn test_list_triggers_detailed_per_event_returns_single_element_events_array() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(Some("app".into()), None, Some("posts_audit_after".into()), true)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
+            database: Some("app".into()),
+            search: Some("posts_audit_after".into()),
+            detail: Detail::Full,
+            ..Default::default()
+        })
         .await
         .expect("list_triggers");
 
-    let entries = response.entries.as_detailed().expect("detailed mode");
+    let objects = response.objects.as_detailed().expect("detailed mode");
     let cases = [
         ("posts_audit_after_delete", "DELETE"),
         ("posts_audit_after_insert", "INSERT"),
         ("posts_audit_after_update", "UPDATE"),
     ];
     for (name, expected_event) in cases {
-        let entry = entries.get(name).unwrap_or_else(|| panic!("{name} missing"));
+        let entry = objects.get(name).unwrap_or_else(|| panic!("{name} missing"));
         let events = entry
             .get("events")
             .and_then(Value::as_array)
@@ -2644,13 +2572,19 @@ async fn test_list_triggers_detailed_per_event_returns_single_element_events_arr
 async fn test_list_triggers_detailed_session_context_fields_are_populated() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(Some("app".into()), None, Some("audit".into()), true)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
+            database: Some("app".into()),
+            search: Some("audit".into()),
+            detail: Detail::Full,
+            ..Default::default()
+        })
         .await
         .expect("list_triggers");
 
-    let entries = response.entries.as_detailed().expect("detailed mode");
-    assert!(!entries.is_empty(), "expected at least one audit trigger");
-    for (name, entry) in entries {
+    let objects = response.objects.as_detailed().expect("detailed mode");
+    assert!(!objects.is_empty(), "expected at least one audit trigger");
+    for (name, entry) in objects {
         for field in [
             "sqlMode",
             "characterSetClient",
@@ -2673,12 +2607,18 @@ async fn test_list_triggers_detailed_definition_round_trips_multiline_body() {
     // "trigger body contains literal newlines or quote characters".
     let handler = handler(true);
     let response = handler
-        .list_triggers(Some("app".into()), None, Some("users_audit_after_insert".into()), true)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
+            database: Some("app".into()),
+            search: Some("users_audit_after_insert".into()),
+            detail: Detail::Full,
+            ..Default::default()
+        })
         .await
         .expect("list_triggers");
 
-    let entries = response.entries.as_detailed().expect("detailed mode");
-    let definition = entries
+    let objects = response.objects.as_detailed().expect("detailed mode");
+    let definition = objects
         .get("users_audit_after_insert")
         .and_then(|e| e.get("definition"))
         .and_then(Value::as_str)
@@ -2703,12 +2643,16 @@ async fn test_list_triggers_detailed_definition_round_trips_multiline_body() {
 async fn test_list_triggers_brief_mode_wire_shape_unchanged() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(Some("app".into()), None, None, false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
+            database: Some("app".into()),
+            ..Default::default()
+        })
         .await
         .expect("list_triggers");
 
     let payload = serde_json::to_value(&response).expect("serialize");
-    let triggers = payload.get("entries").expect("entries field");
+    let triggers = payload.get("objects").expect("objects field");
     assert!(triggers.is_array(), "expected array, got {triggers:?}");
     assert!(
         triggers.as_array().unwrap().iter().all(Value::is_string),
@@ -2720,12 +2664,18 @@ async fn test_list_triggers_brief_mode_wire_shape_unchanged() {
 async fn test_list_triggers_detailed_search_narrows_payload() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(Some("app".into()), None, Some("audit".into()), true)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
+            database: Some("app".into()),
+            search: Some("audit".into()),
+            detail: Detail::Full,
+            ..Default::default()
+        })
         .await
         .expect("list_triggers");
 
-    let entries = response.entries.as_detailed().expect("detailed mode");
-    for name in entries.keys() {
+    let objects = response.objects.as_detailed().expect("detailed mode");
+    for name in objects.keys() {
         assert!(
             name.contains("audit"),
             "non-matching trigger {name:?} appeared in audit-filtered detailed payload"
@@ -2734,7 +2684,7 @@ async fn test_list_triggers_detailed_search_narrows_payload() {
     // Non-audit triggers must NOT appear.
     for forbidden in ["users_before_insert", "posts_before_update", "posts_after_insert"] {
         assert!(
-            !entries.contains_key(forbidden),
+            !objects.contains_key(forbidden),
             "{forbidden} must be excluded from audit-filtered payload"
         );
     }
@@ -2747,12 +2697,18 @@ async fn test_list_triggers_detailed_paginates() {
     let mut cursor = None;
     loop {
         let response = paged
-            .list_triggers(Some("app".into()), cursor.take(), Some("audit".into()), true)
+            .objects(ObjectsRequest {
+                kind: ObjectKind::Trigger,
+                database: Some("app".into()),
+                cursor: cursor.take(),
+                search: Some("audit".into()),
+                detail: Detail::Full,
+            })
             .await
             .expect("list_triggers paginated");
-        let entries = response.entries.as_detailed().expect("detailed");
-        assert!(entries.len() <= 2, "page exceeds page_size: {}", entries.len());
-        all.extend(entries.keys().cloned());
+        let objects = response.objects.as_detailed().expect("detailed");
+        assert!(objects.len() <= 2, "page exceeds page_size: {}", objects.len());
+        all.extend(objects.keys().cloned());
         cursor = response.next_cursor;
         if cursor.is_none() {
             break;
@@ -2760,11 +2716,17 @@ async fn test_list_triggers_detailed_paginates() {
     }
 
     let single = handler(true)
-        .list_triggers(Some("app".into()), None, Some("audit".into()), true)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
+            database: Some("app".into()),
+            search: Some("audit".into()),
+            detail: Detail::Full,
+            ..Default::default()
+        })
         .await
         .expect("single-page list_triggers");
     let single_keys: Vec<String> = single
-        .entries
+        .objects
         .as_detailed()
         .expect("detailed")
         .keys()
@@ -2788,11 +2750,16 @@ async fn test_list_triggers_detailed_sort_is_deterministic() {
     let mut calls = Vec::new();
     for _ in 0..3 {
         let response = handler
-            .list_triggers(Some("app".into()), None, None, true)
+            .objects(ObjectsRequest {
+                kind: ObjectKind::Trigger,
+                database: Some("app".into()),
+                detail: Detail::Full,
+                ..Default::default()
+            })
             .await
             .expect("list_triggers");
         let keys: Vec<String> = response
-            .entries
+            .objects
             .as_detailed()
             .expect("detailed")
             .keys()
@@ -2813,12 +2780,17 @@ async fn test_list_tables_detailed_triggers_use_canonical_definer_form() {
     // as part of Clarification Q1. Verify here so a future revert is caught.
     let handler = handler(true);
     let response = handler
-        .list_tables(Some("app".into()), None, Some("posts".into()), true)
+        .objects(ObjectsRequest {
+            database: Some("app".into()),
+            search: Some("posts".into()),
+            detail: Detail::Full,
+            ..Default::default()
+        })
         .await
         .expect("list_tables");
 
-    let entries = response.entries.as_detailed().expect("detailed mode");
-    let posts = entries.get("posts").expect("posts table present");
+    let objects = response.objects.as_detailed().expect("detailed mode");
+    let posts = objects.get("posts").expect("posts table present");
     let triggers = posts.get("triggers").and_then(Value::as_array).expect("triggers array");
     assert!(!triggers.is_empty(), "posts has at least one seeded trigger");
 
@@ -2842,11 +2814,15 @@ async fn test_list_tables_detailed_triggers_use_canonical_definer_form() {
 async fn test_list_functions_returns_seeded_functions() {
     let handler = handler(true);
     let response = handler
-        .list_functions(Some("app".into()), None, None, false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Function,
+            database: Some("app".into()),
+            ..Default::default()
+        })
         .await
         .expect("list_functions");
 
-    let names = response.entries.as_brief().expect("brief mode").to_vec();
+    let names = response.objects.as_brief().expect("brief mode").to_vec();
     assert!(
         names.contains(&"calc_total".to_string()),
         "expected calc_total, got {names:?}"
@@ -2861,11 +2837,15 @@ async fn test_list_functions_returns_seeded_functions() {
 async fn test_list_functions_excludes_procedures() {
     let handler = handler(true);
     let response = handler
-        .list_functions(Some("app".into()), None, None, false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Function,
+            database: Some("app".into()),
+            ..Default::default()
+        })
         .await
         .expect("list_functions");
 
-    let names = response.entries.as_brief().expect("brief mode").to_vec();
+    let names = response.objects.as_brief().expect("brief mode").to_vec();
     for proc_name in ["archive_user", "touch_post"] {
         assert!(
             !names.contains(&proc_name.to_string()),
@@ -2878,11 +2858,15 @@ async fn test_list_functions_excludes_procedures() {
 async fn test_list_procedures_returns_seeded_procedures() {
     let handler = handler(true);
     let response = handler
-        .list_procedures(Some("app".into()), None, None, false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Procedure,
+            database: Some("app".into()),
+            ..Default::default()
+        })
         .await
         .expect("list_procedures");
 
-    let names = response.entries.as_brief().expect("brief mode").to_vec();
+    let names = response.objects.as_brief().expect("brief mode").to_vec();
     assert!(
         names.contains(&"archive_user".to_string()),
         "expected seeded archive_user procedure, got {names:?}"
@@ -2897,11 +2881,15 @@ async fn test_list_procedures_returns_seeded_procedures() {
 async fn test_list_procedures_excludes_functions() {
     let handler = handler(true);
     let response = handler
-        .list_procedures(Some("app".into()), None, None, false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Procedure,
+            database: Some("app".into()),
+            ..Default::default()
+        })
         .await
         .expect("list_procedures");
 
-    let names = response.entries.as_brief().expect("brief mode").to_vec();
+    let names = response.objects.as_brief().expect("brief mode").to_vec();
     for func_name in ["calc_total", "double_it"] {
         assert!(
             !names.contains(&func_name.to_string()),
@@ -2914,23 +2902,31 @@ async fn test_list_procedures_excludes_functions() {
 async fn test_list_routines_empty_for_empty_database() {
     let handler = handler(true);
     let functions = handler
-        .list_functions(Some("analytics".into()), None, None, false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Function,
+            database: Some("analytics".into()),
+            ..Default::default()
+        })
         .await
         .expect("list_functions");
     assert!(
-        functions.entries.is_empty(),
+        functions.objects.is_empty(),
         "analytics has no functions, got {:?}",
-        functions.entries
+        functions.objects
     );
 
     let procedures = handler
-        .list_procedures(Some("analytics".into()), None, None, false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Procedure,
+            database: Some("analytics".into()),
+            ..Default::default()
+        })
         .await
         .expect("list_procedures");
     assert!(
-        procedures.entries.is_empty(),
+        procedures.objects.is_empty(),
         "analytics has no procedures, got {:?}",
-        procedures.entries
+        procedures.objects
     );
 }
 
@@ -2938,18 +2934,27 @@ async fn test_list_routines_empty_for_empty_database() {
 
 async fn brief_tables(handler: &MysqlHandler, search: Option<&str>) -> Vec<String> {
     let response = handler
-        .list_tables(Some("app".into()), None, search.map(str::to_owned), false)
+        .objects(ObjectsRequest {
+            database: Some("app".into()),
+            search: search.map(str::to_owned),
+            ..Default::default()
+        })
         .await
         .expect("brief list_tables");
-    response.entries.into_brief().expect("brief mode")
+    response.objects.into_brief().expect("brief mode")
 }
 
-async fn detailed_entries(handler: &MysqlHandler, search: &str) -> indexmap::IndexMap<String, Value> {
+async fn detailed_objects(handler: &MysqlHandler, search: &str) -> indexmap::IndexMap<String, Value> {
     let response = handler
-        .list_tables(Some("app".into()), None, Some(search.into()), true)
+        .objects(ObjectsRequest {
+            database: Some("app".into()),
+            search: Some(search.into()),
+            detail: Detail::Full,
+            ..Default::default()
+        })
         .await
         .expect("detailed list_tables");
-    response.entries.as_detailed().expect("detailed mode").clone()
+    response.objects.as_detailed().expect("detailed mode").clone()
 }
 
 #[tokio::test]
@@ -3018,10 +3023,15 @@ async fn list_tables_brief_pagination_under_search() {
     let mut cursor = None;
     loop {
         let response = handler
-            .list_tables(Some("app".into()), cursor.take(), Some("post".into()), false)
+            .objects(ObjectsRequest {
+                database: Some("app".into()),
+                cursor: cursor.take(),
+                search: Some("post".into()),
+                ..Default::default()
+            })
             .await
             .expect("paged brief search");
-        let page = response.entries.into_brief().expect("brief mode");
+        let page = response.objects.into_brief().expect("brief mode");
         assert!(page.len() <= 1, "page_size=1 caps to 1 per page");
         collected.extend(page);
         match response.next_cursor {
@@ -3053,9 +3063,9 @@ async fn list_tables_brief_pagination_under_search() {
 #[tokio::test]
 async fn list_tables_detailed_returns_keyed_object() {
     let handler = handler(true);
-    let entries = detailed_entries(&handler, "posts").await;
-    assert!(entries.contains_key("posts"), "expected `posts` key: {entries:?}");
-    for (name, value) in &entries {
+    let objects = detailed_objects(&handler, "posts").await;
+    assert!(objects.contains_key("posts"), "expected `posts` key: {objects:?}");
+    for (name, value) in &objects {
         assert!(value.is_object(), "value for `{name}` must be a JSON object: {value}");
     }
 }
@@ -3063,8 +3073,8 @@ async fn list_tables_detailed_returns_keyed_object() {
 #[tokio::test]
 async fn list_tables_detailed_includes_check_constraint() {
     let handler = handler(true);
-    let entries = detailed_entries(&handler, "posts").await;
-    let posts = entries.get("posts").expect("posts entry");
+    let objects = detailed_objects(&handler, "posts").await;
+    let posts = objects.get("posts").expect("posts entry");
     let constraints = posts["constraints"].as_array().expect("constraints array");
     let check = constraints
         .iter()
@@ -3081,11 +3091,11 @@ async fn list_tables_detailed_includes_check_constraint() {
 #[tokio::test]
 async fn list_tables_detailed_marks_partitioned_table() {
     let handler = handler(true);
-    let entries = detailed_entries(&handler, "events_by_year").await;
-    let events = entries.get("events_by_year").expect("events_by_year entry");
+    let objects = detailed_objects(&handler, "events_by_year").await;
+    let events = objects.get("events_by_year").expect("events_by_year entry");
     assert_eq!(events["kind"], "PARTITIONED_TABLE");
 
-    let plain = detailed_entries(&handler, "tags").await;
+    let plain = detailed_objects(&handler, "tags").await;
     let tags = plain.get("tags").expect("tags entry");
     assert_eq!(tags["kind"], "TABLE", "non-partitioned table stays kind=TABLE");
 }
@@ -3093,8 +3103,8 @@ async fn list_tables_detailed_marks_partitioned_table() {
 #[tokio::test]
 async fn list_tables_detailed_synthesises_index_definitions() {
     let handler = handler(true);
-    let entries = detailed_entries(&handler, "posts").await;
-    let posts = entries.get("posts").expect("posts entry");
+    let objects = detailed_objects(&handler, "posts").await;
+    let posts = objects.get("posts").expect("posts entry");
     let indexes = posts["indexes"].as_array().expect("indexes array");
 
     let by_name = |n: &str| {
@@ -3140,8 +3150,8 @@ async fn list_tables_detailed_synthesises_index_definitions() {
 #[tokio::test]
 async fn list_tables_detailed_generated_column_expression_in_default() {
     let handler = handler(true);
-    let entries = detailed_entries(&handler, "users").await;
-    let users = entries.get("users").expect("users entry");
+    let objects = detailed_objects(&handler, "users").await;
+    let users = objects.get("users").expect("users entry");
     let columns = users["columns"].as_array().expect("columns array");
     let display = columns
         .iter()
@@ -3161,8 +3171,8 @@ async fn list_tables_detailed_generated_column_expression_in_default() {
 #[tokio::test]
 async fn list_tables_detailed_triggers_reconstruct_create_trigger() {
     let handler = handler(true);
-    let entries = detailed_entries(&handler, "posts").await;
-    let posts = entries.get("posts").expect("posts entry");
+    let objects = detailed_objects(&handler, "posts").await;
+    let posts = objects.get("posts").expect("posts entry");
     let triggers = posts["triggers"].as_array().expect("triggers array");
     let trigger = triggers
         .iter()
@@ -3192,8 +3202,8 @@ async fn list_tables_detailed_triggers_reconstruct_create_trigger() {
 async fn list_tables_detailed_comments_trimmed_to_null_when_empty() {
     let handler = handler(true);
 
-    let entries = detailed_entries(&handler, "posts").await;
-    let posts = entries.get("posts").expect("posts entry");
+    let objects = detailed_objects(&handler, "posts").await;
+    let posts = objects.get("posts").expect("posts entry");
     assert_eq!(
         posts["comment"],
         Value::String("Blog post entries.".into()),
@@ -3207,7 +3217,7 @@ async fn list_tables_detailed_comments_trimmed_to_null_when_empty() {
         "seeded COLUMN COMMENT must surface verbatim",
     );
 
-    let plain = detailed_entries(&handler, "tags").await;
+    let plain = detailed_objects(&handler, "tags").await;
     let tags = plain.get("tags").expect("tags entry");
     assert!(
         tags["comment"].is_null(),
@@ -3228,10 +3238,16 @@ async fn list_tables_detailed_search_preserves_filter_across_pages() {
     let mut cursor = None;
     loop {
         let response = handler
-            .list_tables(Some("app".into()), cursor.take(), Some("post".into()), true)
+            .objects(ObjectsRequest {
+                database: Some("app".into()),
+                cursor: cursor.take(),
+                search: Some("post".into()),
+                detail: Detail::Full,
+                ..Default::default()
+            })
             .await
             .expect("paged detailed search");
-        let page = response.entries.as_detailed().expect("detailed mode");
+        let page = response.objects.as_detailed().expect("detailed mode");
         assert!(page.len() <= 1, "page_size=1 caps to 1 per page");
         collected.extend(page.keys().cloned());
         match response.next_cursor {
@@ -3256,11 +3272,15 @@ async fn list_tables_detailed_excludes_system_schemas_passes_through_validation(
     // whatever metadata that schema's TABLE rows expose. Regression pin.
     let handler = handler(true);
     let response = handler
-        .list_tables(Some("information_schema".into()), None, None, true)
+        .objects(ObjectsRequest {
+            database: Some("information_schema".into()),
+            detail: Detail::Full,
+            ..Default::default()
+        })
         .await
         .expect("information_schema is identifier-valid");
-    let entries = response.entries.as_detailed().expect("detailed mode");
-    for (name, value) in entries {
+    let objects = response.objects.as_detailed().expect("detailed mode");
+    for (name, value) in objects {
         assert_eq!(
             value["schema"], "information_schema",
             "every entry from information_schema must report that schema, got `{name}`: {value}",
@@ -3271,9 +3291,9 @@ async fn list_tables_detailed_excludes_system_schemas_passes_through_validation(
 #[tokio::test]
 async fn list_tables_detailed_omits_inner_name_field() {
     let handler = handler(true);
-    let entries = detailed_entries(&handler, "post").await;
-    assert!(!entries.is_empty(), "fixture must yield at least one match");
-    for (key, value) in &entries {
+    let objects = detailed_objects(&handler, "post").await;
+    assert!(!objects.is_empty(), "fixture must yield at least one match");
+    for (key, value) in &objects {
         assert!(
             value.get("name").is_none(),
             "value for `{key}` must not carry redundant `name`: {value}",
@@ -3285,7 +3305,7 @@ async fn list_tables_detailed_omits_inner_name_field() {
 async fn list_tables_detailed_iteration_order_matches_brief_sort() {
     let handler = handler(true);
     let brief = brief_tables(&handler, Some("post")).await;
-    let detailed = detailed_entries(&handler, "post").await;
+    let detailed = detailed_objects(&handler, "post").await;
     let detailed_keys: Vec<String> = detailed.keys().cloned().collect();
     assert_eq!(
         brief, detailed_keys,
@@ -3296,10 +3316,10 @@ async fn list_tables_detailed_iteration_order_matches_brief_sort() {
 #[tokio::test]
 async fn list_tables_detailed_empty_page_is_empty_object() {
     let handler = handler(true);
-    let entries = detailed_entries(&handler, "zzznosuchprefix").await;
+    let objects = detailed_objects(&handler, "zzznosuchprefix").await;
     assert!(
-        entries.is_empty(),
-        "no-match search must yield empty map (serialises as `{{}}`): {entries:?}",
+        objects.is_empty(),
+        "no-match search must yield empty map (serialises as `{{}}`): {objects:?}",
     );
 }
 
@@ -3309,11 +3329,16 @@ async fn list_tables_detailed_empty_page_is_empty_object() {
 async fn test_list_functions_search_filter_returns_only_matches() {
     let handler = handler(true);
     let response = handler
-        .list_functions(Some("app".into()), None, Some("order".into()), false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Function,
+            database: Some("app".into()),
+            search: Some("order".into()),
+            ..Default::default()
+        })
         .await
         .expect("list_functions");
 
-    let names = response.entries.as_brief().expect("brief mode");
+    let names = response.objects.as_brief().expect("brief mode");
     let expected = [
         "calc_order_subtotal".to_string(),
         "calc_order_total".to_string(),
@@ -3326,25 +3351,40 @@ async fn test_list_functions_search_filter_returns_only_matches() {
 async fn test_list_functions_search_is_case_insensitive() {
     let handler = handler(true);
     let upper = handler
-        .list_functions(Some("app".into()), None, Some("ORDER".into()), false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Function,
+            database: Some("app".into()),
+            search: Some("ORDER".into()),
+            ..Default::default()
+        })
         .await
         .expect("upper");
     let lower = handler
-        .list_functions(Some("app".into()), None, Some("order".into()), false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Function,
+            database: Some("app".into()),
+            search: Some("order".into()),
+            ..Default::default()
+        })
         .await
         .expect("lower");
-    assert_eq!(upper.entries.as_brief(), lower.entries.as_brief());
+    assert_eq!(upper.objects.as_brief(), lower.objects.as_brief());
 }
 
 #[tokio::test]
 async fn test_list_functions_search_no_match_returns_empty() {
     let handler = handler(true);
     let response = handler
-        .list_functions(Some("app".into()), None, Some("nonexistent_function_xyz".into()), false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Function,
+            database: Some("app".into()),
+            search: Some("nonexistent_function_xyz".into()),
+            ..Default::default()
+        })
         .await
         .expect("list_functions");
 
-    assert!(response.entries.as_brief().expect("brief").is_empty());
+    assert!(response.objects.as_brief().expect("brief").is_empty());
     assert!(response.next_cursor.is_none());
 }
 
@@ -3352,14 +3392,24 @@ async fn test_list_functions_search_no_match_returns_empty() {
 async fn test_list_functions_search_supports_wildcard_semantics() {
     let handler = handler(true);
     let plain = handler
-        .list_functions(Some("app".into()), None, Some("order".into()), false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Function,
+            database: Some("app".into()),
+            search: Some("order".into()),
+            ..Default::default()
+        })
         .await
         .expect("plain");
     let with_wildcard = handler
-        .list_functions(Some("app".into()), None, Some("%order%".into()), false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Function,
+            database: Some("app".into()),
+            search: Some("%order%".into()),
+            ..Default::default()
+        })
         .await
         .expect("wildcard");
-    assert_eq!(plain.entries.as_brief(), with_wildcard.entries.as_brief());
+    assert_eq!(plain.objects.as_brief(), with_wildcard.objects.as_brief());
 }
 
 #[tokio::test]
@@ -3375,12 +3425,17 @@ async fn test_list_functions_search_sql_meta_payloads_are_safe() {
         "'; DROP FUNCTION calc_order_total; --",
     ] {
         let response = handler
-            .list_functions(Some("app".into()), None, Some(payload.into()), false)
+            .objects(ObjectsRequest {
+                kind: ObjectKind::Function,
+                database: Some("app".into()),
+                search: Some(payload.into()),
+                ..Default::default()
+            })
             .await
             .unwrap_or_else(|e| panic!("list_functions failed for payload {payload:?}: {e:?}"));
 
         assert!(
-            response.entries.as_brief().is_some(),
+            response.objects.as_brief().is_some(),
             "payload {payload:?} returned non-brief shape"
         );
     }
@@ -3393,10 +3448,16 @@ async fn test_list_functions_search_paginates_filtered_results() {
     let mut cursor = None;
     loop {
         let response = paged
-            .list_functions(Some("app".into()), cursor.take(), Some("order".into()), false)
+            .objects(ObjectsRequest {
+                kind: ObjectKind::Function,
+                database: Some("app".into()),
+                cursor: cursor.take(),
+                search: Some("order".into()),
+                ..Default::default()
+            })
             .await
             .expect("list_functions paginated");
-        let names = response.entries.as_brief().expect("brief").to_vec();
+        let names = response.objects.as_brief().expect("brief").to_vec();
         all.extend(names);
         cursor = response.next_cursor;
         if cursor.is_none() {
@@ -3405,12 +3466,17 @@ async fn test_list_functions_search_paginates_filtered_results() {
     }
 
     let single = handler(true)
-        .list_functions(Some("app".into()), None, Some("order".into()), false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Function,
+            database: Some("app".into()),
+            search: Some("order".into()),
+            ..Default::default()
+        })
         .await
         .expect("single-page list_functions");
     assert_eq!(
         all,
-        single.entries.as_brief().expect("brief"),
+        single.objects.as_brief().expect("brief"),
         "paginated traversal should equal single-page result"
     );
 }
@@ -3419,21 +3485,25 @@ async fn test_list_functions_search_paginates_filtered_results() {
 async fn test_list_functions_brief_mode_wire_shape_unchanged() {
     let handler = handler(true);
     let response = handler
-        .list_functions(Some("app".into()), None, None, false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Function,
+            database: Some("app".into()),
+            ..Default::default()
+        })
         .await
         .expect("list_functions");
 
-    let names = response.entries.as_brief().expect("brief mode (Vec<String>)");
+    let names = response.objects.as_brief().expect("brief mode (Vec<String>)");
     assert!(
         names.iter().all(|s| !s.is_empty()),
         "brief mode names must be non-empty strings, got {names:?}"
     );
     // Must serialise as a flat array of strings (no object wrapping).
     let json = serde_json::to_value(&response).expect("serialize");
-    let functions = json.get("entries").expect("entries key");
+    let functions = json.get("objects").expect("objects key");
     assert!(
         functions.is_array(),
-        "brief mode `entries` must be a JSON array, got {functions:?}"
+        "brief mode `objects` must be a JSON array, got {functions:?}"
     );
 }
 
@@ -3441,15 +3511,21 @@ async fn test_list_functions_brief_mode_wire_shape_unchanged() {
 async fn test_list_functions_detailed_returns_keyed_object_with_all_fields() {
     let handler = handler(true);
     let response = handler
-        .list_functions(Some("app".into()), None, Some("calc_order_total".into()), true)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Function,
+            database: Some("app".into()),
+            search: Some("calc_order_total".into()),
+            detail: Detail::Full,
+            ..Default::default()
+        })
         .await
         .expect("list_functions");
 
-    let entries = response.entries.as_detailed().expect("detailed mode");
+    let objects = response.objects.as_detailed().expect("detailed mode");
     // Search "calc_order_total" matches both `calc_order_total` and
     // `recalc_order_total_v2` because the latter contains the former as a
     // substring. Field-shape assertions only need the calc_order_total entry.
-    let entry = entries.get("calc_order_total").expect("calc_order_total key present");
+    let entry = objects.get("calc_order_total").expect("calc_order_total key present");
 
     let obj = entry.as_object().expect("entry is object");
     let expected_keys = [
@@ -3498,12 +3574,18 @@ async fn test_list_functions_detailed_returns_keyed_object_with_all_fields() {
 async fn test_list_functions_detailed_definition_uses_canonical_definer_form() {
     let handler = handler(true);
     let response = handler
-        .list_functions(Some("app".into()), None, Some("calc_order_total".into()), true)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Function,
+            database: Some("app".into()),
+            search: Some("calc_order_total".into()),
+            detail: Detail::Full,
+            ..Default::default()
+        })
         .await
         .expect("list_functions");
 
-    let entries = response.entries.as_detailed().expect("detailed");
-    let definition = entries
+    let objects = response.objects.as_detailed().expect("detailed");
+    let definition = objects
         .get("calc_order_total")
         .and_then(|e| e.get("definition"))
         .and_then(Value::as_str)
@@ -3546,11 +3628,17 @@ async fn test_list_functions_detailed_two_field_safety_split() {
 
     // recalc_order_total_v2 — NOT DETERMINISTIC + MODIFIES SQL DATA + DEFINER security.
     let resp = handler
-        .list_functions(Some("app".into()), None, Some("recalc_order_total_v2".into()), true)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Function,
+            database: Some("app".into()),
+            search: Some("recalc_order_total_v2".into()),
+            detail: Detail::Full,
+            ..Default::default()
+        })
         .await
         .expect("list_functions");
     let entry = resp
-        .entries
+        .objects
         .as_detailed()
         .expect("detailed")
         .get("recalc_order_total_v2")
@@ -3565,11 +3653,17 @@ async fn test_list_functions_detailed_two_field_safety_split() {
 
     // current_pricing_version — NO_SQL.
     let resp = handler
-        .list_functions(Some("app".into()), None, Some("current_pricing_version".into()), true)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Function,
+            database: Some("app".into()),
+            search: Some("current_pricing_version".into()),
+            detail: Detail::Full,
+            ..Default::default()
+        })
         .await
         .expect("list_functions");
     let entry = resp
-        .entries
+        .objects
         .as_detailed()
         .expect("detailed")
         .get("current_pricing_version")
@@ -3581,11 +3675,17 @@ async fn test_list_functions_detailed_two_field_safety_split() {
 
     // double_it — CONTAINS_SQL (default for declarations without an access clause).
     let resp = handler
-        .list_functions(Some("app".into()), None, Some("double_it".into()), true)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Function,
+            database: Some("app".into()),
+            search: Some("double_it".into()),
+            detail: Detail::Full,
+            ..Default::default()
+        })
         .await
         .expect("list_functions");
     let entry = resp
-        .entries
+        .objects
         .as_detailed()
         .expect("detailed")
         .get("double_it")
@@ -3600,11 +3700,17 @@ async fn test_list_functions_detailed_arguments_field_round_trips_dtd() {
 
     // Multi-parameter function — `arguments` follows ORDINAL_POSITION ASC.
     let resp = handler
-        .list_functions(Some("app".into()), None, Some("calc_order_subtotal".into()), true)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Function,
+            database: Some("app".into()),
+            search: Some("calc_order_subtotal".into()),
+            detail: Detail::Full,
+            ..Default::default()
+        })
         .await
         .expect("list_functions");
     let entry = resp
-        .entries
+        .objects
         .as_detailed()
         .expect("detailed")
         .get("calc_order_subtotal")
@@ -3635,11 +3741,17 @@ async fn test_list_functions_detailed_arguments_field_round_trips_dtd() {
 
     // Zero-parameter function — `arguments` is empty string, not null.
     let resp = handler
-        .list_functions(Some("app".into()), None, Some("current_pricing_version".into()), true)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Function,
+            database: Some("app".into()),
+            search: Some("current_pricing_version".into()),
+            detail: Detail::Full,
+            ..Default::default()
+        })
         .await
         .expect("list_functions");
     let entry = resp
-        .entries
+        .objects
         .as_detailed()
         .expect("detailed")
         .get("current_pricing_version")
@@ -3659,11 +3771,17 @@ async fn test_list_functions_detailed_description_null_coercion() {
 
     // Function with no COMMENT — description must be JSON null (NOT empty string).
     let resp = handler
-        .list_functions(Some("app".into()), None, Some("double_it".into()), true)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Function,
+            database: Some("app".into()),
+            search: Some("double_it".into()),
+            detail: Detail::Full,
+            ..Default::default()
+        })
         .await
         .expect("list_functions");
     let entry = resp
-        .entries
+        .objects
         .as_detailed()
         .expect("detailed")
         .get("double_it")
@@ -3677,11 +3795,17 @@ async fn test_list_functions_detailed_description_null_coercion() {
 
     // Function with a COMMENT — description carries the text.
     let resp = handler
-        .list_functions(Some("app".into()), None, Some("calc_order_total".into()), true)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Function,
+            database: Some("app".into()),
+            search: Some("calc_order_total".into()),
+            detail: Detail::Full,
+            ..Default::default()
+        })
         .await
         .expect("list_functions");
     let entry = resp
-        .entries
+        .objects
         .as_detailed()
         .expect("detailed")
         .get("calc_order_total")
@@ -3697,13 +3821,19 @@ async fn test_list_functions_detailed_description_null_coercion() {
 async fn test_list_functions_detailed_session_context_fields_are_populated() {
     let handler = handler(true);
     let response = handler
-        .list_functions(Some("app".into()), None, Some("order".into()), true)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Function,
+            database: Some("app".into()),
+            search: Some("order".into()),
+            detail: Detail::Full,
+            ..Default::default()
+        })
         .await
         .expect("list_functions");
 
-    let entries = response.entries.as_detailed().expect("detailed");
-    assert!(!entries.is_empty(), "expected order matches");
-    for (name, value) in entries {
+    let objects = response.objects.as_detailed().expect("detailed");
+    assert!(!objects.is_empty(), "expected order matches");
+    for (name, value) in objects {
         for key in [
             "sqlMode",
             "characterSetClient",
@@ -3723,12 +3853,18 @@ async fn test_list_functions_detailed_session_context_fields_are_populated() {
 async fn test_list_functions_detailed_definition_round_trips_multiline_body() {
     let handler = handler(true);
     let response = handler
-        .list_functions(Some("app".into()), None, Some("format_audit_note".into()), true)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Function,
+            database: Some("app".into()),
+            search: Some("format_audit_note".into()),
+            detail: Detail::Full,
+            ..Default::default()
+        })
         .await
         .expect("list_functions");
 
     let definition = response
-        .entries
+        .objects
         .as_detailed()
         .expect("detailed")
         .get("format_audit_note")
@@ -3748,12 +3884,18 @@ async fn test_list_functions_detailed_definition_round_trips_multiline_body() {
 async fn test_list_functions_detailed_search_narrows_payload() {
     let handler = handler(true);
     let response = handler
-        .list_functions(Some("app".into()), None, Some("order".into()), true)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Function,
+            database: Some("app".into()),
+            search: Some("order".into()),
+            detail: Detail::Full,
+            ..Default::default()
+        })
         .await
         .expect("list_functions");
 
     let keys: Vec<String> = response
-        .entries
+        .objects
         .as_detailed()
         .expect("detailed")
         .keys()
@@ -3782,12 +3924,18 @@ async fn test_list_functions_detailed_paginates() {
     let mut cursor = None;
     loop {
         let response = paged
-            .list_functions(Some("app".into()), cursor.take(), None, true)
+            .objects(ObjectsRequest {
+                kind: ObjectKind::Function,
+                database: Some("app".into()),
+                cursor: cursor.take(),
+                detail: Detail::Full,
+                ..Default::default()
+            })
             .await
             .expect("list_functions paginated");
-        let entries = response.entries.as_detailed().expect("detailed");
-        assert!(entries.len() <= 2, "page exceeded page_size: {entries:?}");
-        all_keys.extend(entries.keys().cloned());
+        let objects = response.objects.as_detailed().expect("detailed");
+        assert!(objects.len() <= 2, "page exceeded page_size: {objects:?}");
+        all_keys.extend(objects.keys().cloned());
         cursor = response.next_cursor;
         if cursor.is_none() {
             break;
@@ -3795,11 +3943,16 @@ async fn test_list_functions_detailed_paginates() {
     }
 
     let single = handler(true)
-        .list_functions(Some("app".into()), None, None, true)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Function,
+            database: Some("app".into()),
+            detail: Detail::Full,
+            ..Default::default()
+        })
         .await
         .expect("single-page list_functions");
     let single_keys: Vec<String> = single
-        .entries
+        .objects
         .as_detailed()
         .expect("detailed")
         .keys()
@@ -3814,11 +3967,15 @@ async fn test_list_functions_excludes_loadable_udfs_and_procedures() {
     // through listFunctions — ROUTINE_TYPE='FUNCTION' filter enforces this.
     let handler = handler(true);
     let response = handler
-        .list_functions(Some("app".into()), None, None, false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Function,
+            database: Some("app".into()),
+            ..Default::default()
+        })
         .await
         .expect("list_functions");
 
-    let names = response.entries.as_brief().expect("brief").to_vec();
+    let names = response.objects.as_brief().expect("brief").to_vec();
     for proc_name in ["archive_user", "touch_post"] {
         assert!(
             !names.contains(&proc_name.to_string()),
@@ -3836,11 +3993,17 @@ async fn test_list_triggers_and_tables_definer_form_unchanged_after_extraction()
     let handler = handler(true);
 
     let triggers = handler
-        .list_triggers(Some("app".into()), None, Some("posts_audit_after_insert".into()), true)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
+            database: Some("app".into()),
+            search: Some("posts_audit_after_insert".into()),
+            detail: Detail::Full,
+            ..Default::default()
+        })
         .await
         .expect("list_triggers detailed");
     let trigger_def = triggers
-        .entries
+        .objects
         .as_detailed()
         .expect("detailed")
         .get("posts_audit_after_insert")
@@ -3857,19 +4020,24 @@ async fn test_list_triggers_and_tables_definer_form_unchanged_after_extraction()
     );
 
     let tables = handler
-        .list_tables(Some("app".into()), None, Some("posts".into()), true)
+        .objects(ObjectsRequest {
+            database: Some("app".into()),
+            search: Some("posts".into()),
+            detail: Detail::Full,
+            ..Default::default()
+        })
         .await
         .expect("list_tables detailed");
     let posts = tables
-        .entries
+        .objects
         .as_detailed()
         .expect("detailed")
         .get("posts")
         .expect("posts entry")
         .clone();
-    let trigger_entries = posts.get("triggers").and_then(Value::as_array).expect("triggers array");
-    assert!(!trigger_entries.is_empty(), "expected at least one trigger on posts");
-    for tr in trigger_entries {
+    let trigger_objects = posts.get("triggers").and_then(Value::as_array).expect("triggers array");
+    assert!(!trigger_objects.is_empty(), "expected at least one trigger on posts");
+    for tr in trigger_objects {
         let def = tr.get("definition").and_then(Value::as_str).expect("definition");
         assert!(
             def.starts_with("CREATE DEFINER=`"),
@@ -3886,18 +4054,29 @@ async fn test_list_triggers_and_tables_definer_form_unchanged_after_extraction()
 
 async fn brief_procedures(handler: &MysqlHandler, search: Option<&str>) -> Vec<String> {
     let response = handler
-        .list_procedures(Some("app".into()), None, search.map(str::to_owned), false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Procedure,
+            database: Some("app".into()),
+            search: search.map(str::to_owned),
+            ..Default::default()
+        })
         .await
         .expect("brief list_procedures");
-    response.entries.into_brief().expect("brief mode")
+    response.objects.into_brief().expect("brief mode")
 }
 
-async fn detailed_procedure_entries(handler: &MysqlHandler, search: &str) -> indexmap::IndexMap<String, Value> {
+async fn detailed_procedure_objects(handler: &MysqlHandler, search: &str) -> indexmap::IndexMap<String, Value> {
     let response = handler
-        .list_procedures(Some("app".into()), None, Some(search.into()), true)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Procedure,
+            database: Some("app".into()),
+            search: Some(search.into()),
+            detail: Detail::Full,
+            ..Default::default()
+        })
         .await
         .expect("detailed list_procedures");
-    response.entries.as_detailed().expect("detailed mode").clone()
+    response.objects.as_detailed().expect("detailed mode").clone()
 }
 
 #[tokio::test]
@@ -3950,7 +4129,12 @@ async fn test_list_procedures_search_resists_sql_meta_chars() {
     let handler = handler(true);
     for payload in ["'", ";", "--", "`", "\\", "archive'; DROP PROCEDURE bad; --"] {
         let result = handler
-            .list_procedures(Some("app".into()), None, Some(payload.into()), false)
+            .objects(ObjectsRequest {
+                kind: ObjectKind::Procedure,
+                database: Some("app".into()),
+                search: Some(payload.into()),
+                ..Default::default()
+            })
             .await;
         assert!(
             result.is_ok(),
@@ -3964,30 +4148,34 @@ async fn test_list_procedures_search_resists_sql_meta_chars() {
 async fn test_list_procedures_brief_wire_shape_unchanged() {
     let handler = handler(true);
     let response = handler
-        .list_procedures(Some("app".into()), None, None, false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Procedure,
+            database: Some("app".into()),
+            ..Default::default()
+        })
         .await
         .expect("list_procedures");
 
-    let names = response.entries.as_brief().expect("brief mode (Vec<String>)");
+    let names = response.objects.as_brief().expect("brief mode (Vec<String>)");
     assert!(
         names.iter().all(|s| !s.is_empty()),
         "brief mode names must be non-empty strings, got {names:?}"
     );
     let json = serde_json::to_value(&response).expect("serialize");
-    let procedures = json.get("entries").expect("entries key");
+    let procedures = json.get("objects").expect("objects key");
     assert!(
         procedures.is_array(),
-        "brief mode `entries` must be a JSON array, got {procedures:?}"
+        "brief mode `objects` must be a JSON array, got {procedures:?}"
     );
 }
 
 #[tokio::test]
 async fn test_list_procedures_detailed_returns_keyed_object_with_all_fields() {
     let handler = handler(true);
-    let entries = detailed_procedure_entries(&handler, "archive_order").await;
+    let objects = detailed_procedure_objects(&handler, "archive_order").await;
     // search "archive_order" matches both `archive_order` and
     // `archive_order_history`. Field-shape assertions only need archive_order.
-    let entry = entries.get("archive_order").expect("archive_order key present");
+    let entry = objects.get("archive_order").expect("archive_order key present");
 
     let obj = entry.as_object().expect("entry is object");
     let expected_keys = [
@@ -4037,8 +4225,8 @@ async fn test_list_procedures_detailed_returns_keyed_object_with_all_fields() {
 #[tokio::test]
 async fn test_list_procedures_detailed_renders_in_out_inout_modes_in_arguments() {
     let handler = handler(true);
-    let entries = detailed_procedure_entries(&handler, "compute_user_metrics").await;
-    let arguments = entries
+    let objects = detailed_procedure_objects(&handler, "compute_user_metrics").await;
+    let arguments = objects
         .get("compute_user_metrics")
         .and_then(|e| e.get("arguments"))
         .and_then(Value::as_str)
@@ -4066,8 +4254,8 @@ async fn test_list_procedures_detailed_renders_in_out_inout_modes_in_arguments()
 #[tokio::test]
 async fn test_list_procedures_detailed_omits_returntype_field() {
     let handler = handler(true);
-    let entries = detailed_procedure_entries(&handler, "archive_order").await;
-    let entry = entries.get("archive_order").expect("archive_order");
+    let objects = detailed_procedure_objects(&handler, "archive_order").await;
+    let entry = objects.get("archive_order").expect("archive_order");
     let obj = entry.as_object().expect("object");
     assert!(
         !obj.contains_key("returnType"),
@@ -4078,8 +4266,8 @@ async fn test_list_procedures_detailed_omits_returntype_field() {
 #[tokio::test]
 async fn test_list_procedures_detailed_definition_omits_returns_clause() {
     let handler = handler(true);
-    let entries = detailed_procedure_entries(&handler, "archive_order").await;
-    let definition = entries
+    let objects = detailed_procedure_objects(&handler, "archive_order").await;
+    let definition = objects
         .get("archive_order")
         .and_then(|e| e.get("definition"))
         .and_then(Value::as_str)
@@ -4102,8 +4290,8 @@ async fn test_list_procedures_detailed_definition_omits_returns_clause() {
 #[tokio::test]
 async fn test_list_procedures_detailed_zero_parameter_arguments_is_empty_string() {
     let handler = handler(true);
-    let entries = detailed_procedure_entries(&handler, "no_arg_proc").await;
-    let entry = entries.get("no_arg_proc").expect("no_arg_proc");
+    let objects = detailed_procedure_objects(&handler, "no_arg_proc").await;
+    let entry = objects.get("no_arg_proc").expect("no_arg_proc");
     assert_eq!(
         entry.get("arguments").and_then(Value::as_str),
         Some(""),
@@ -4119,16 +4307,16 @@ async fn test_list_procedures_detailed_zero_parameter_arguments_is_empty_string(
 #[tokio::test]
 async fn test_list_procedures_detailed_security_definer_reports_definer() {
     let handler = handler(true);
-    let entries = detailed_procedure_entries(&handler, "compute_user_metrics").await;
-    let security = entries
+    let objects = detailed_procedure_objects(&handler, "compute_user_metrics").await;
+    let security = objects
         .get("compute_user_metrics")
         .and_then(|e| e.get("security"))
         .and_then(Value::as_str)
         .expect("security");
     assert_eq!(security, "DEFINER", "got {security:?}");
 
-    let entries_invoker = detailed_procedure_entries(&handler, "archive_order").await;
-    let security_invoker = entries_invoker
+    let objects_invoker = detailed_procedure_objects(&handler, "archive_order").await;
+    let security_invoker = objects_invoker
         .get("archive_order")
         .and_then(|e| e.get("security"))
         .and_then(Value::as_str)
@@ -4139,8 +4327,8 @@ async fn test_list_procedures_detailed_security_definer_reports_definer() {
 #[tokio::test]
 async fn test_list_procedures_detailed_no_comment_yields_null_description() {
     let handler = handler(true);
-    let entries = detailed_procedure_entries(&handler, "purge_order_archive").await;
-    let description = entries
+    let objects = detailed_procedure_objects(&handler, "purge_order_archive").await;
+    let description = objects
         .get("purge_order_archive")
         .and_then(|e| e.get("description"))
         .expect("description field present");
@@ -4153,7 +4341,7 @@ async fn test_list_procedures_detailed_no_comment_yields_null_description() {
 #[tokio::test]
 async fn test_list_procedures_detailed_combined_with_search_filters_before_metadata() {
     let handler = handler(true);
-    let detailed = detailed_procedure_entries(&handler, "archive").await;
+    let detailed = detailed_procedure_objects(&handler, "archive").await;
     let brief = brief_procedures(&handler, Some("archive")).await;
 
     let detailed_keys: Vec<String> = detailed.keys().cloned().collect();
@@ -4170,7 +4358,7 @@ async fn test_list_procedures_detailed_combined_with_search_filters_before_metad
 async fn test_list_procedures_detailed_iteration_order_matches_brief_sort() {
     let handler = handler(true);
     let brief = brief_procedures(&handler, Some("archive")).await;
-    let detailed = detailed_procedure_entries(&handler, "archive").await;
+    let detailed = detailed_procedure_objects(&handler, "archive").await;
     let detailed_keys: Vec<String> = detailed.keys().cloned().collect();
     assert_eq!(
         brief, detailed_keys,
@@ -4181,8 +4369,8 @@ async fn test_list_procedures_detailed_iteration_order_matches_brief_sort() {
 #[tokio::test]
 async fn test_list_procedures_detailed_session_context_fields_populated() {
     let handler = handler(true);
-    let entries = detailed_procedure_entries(&handler, "archive_order").await;
-    let entry = entries.get("archive_order").expect("archive_order");
+    let objects = detailed_procedure_objects(&handler, "archive_order").await;
+    let entry = objects.get("archive_order").expect("archive_order");
     for key in [
         "sqlMode",
         "characterSetClient",
@@ -4200,8 +4388,8 @@ async fn test_list_procedures_detailed_session_context_fields_populated() {
 #[tokio::test]
 async fn test_list_procedures_detailed_round_trips_body_with_quotes_and_newlines() {
     let handler = handler(true);
-    let entries = detailed_procedure_entries(&handler, "no_arg_proc").await;
-    let definition = entries
+    let objects = detailed_procedure_objects(&handler, "no_arg_proc").await;
+    let definition = objects
         .get("no_arg_proc")
         .and_then(|e| e.get("definition"))
         .and_then(Value::as_str)
@@ -4235,8 +4423,8 @@ async fn test_list_procedures_detailed_round_trips_body_with_quotes_and_newlines
 #[tokio::test]
 async fn test_list_procedures_detailed_definition_uses_canonical_definer_form() {
     let handler = handler(true);
-    let entries = detailed_procedure_entries(&handler, "archive_order").await;
-    let definition = entries
+    let objects = detailed_procedure_objects(&handler, "archive_order").await;
+    let definition = objects
         .get("archive_order")
         .and_then(|e| e.get("definition"))
         .and_then(Value::as_str)
@@ -4257,18 +4445,29 @@ async fn test_list_procedures_detailed_definition_uses_canonical_definer_form() 
 
 async fn brief_views(handler: &MysqlHandler, search: Option<&str>) -> Vec<String> {
     let response = handler
-        .list_views(Some("app".into()), None, search.map(str::to_owned), false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::View,
+            database: Some("app".into()),
+            search: search.map(str::to_owned),
+            ..Default::default()
+        })
         .await
         .expect("brief list_views");
-    response.entries.into_brief().expect("brief mode")
+    response.objects.into_brief().expect("brief mode")
 }
 
-async fn detailed_view_entries(handler: &MysqlHandler, search: &str) -> indexmap::IndexMap<String, Value> {
+async fn detailed_view_objects(handler: &MysqlHandler, search: &str) -> indexmap::IndexMap<String, Value> {
     let response = handler
-        .list_views(Some("app".into()), None, Some(search.into()), true)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::View,
+            database: Some("app".into()),
+            search: Some(search.into()),
+            detail: Detail::Full,
+            ..Default::default()
+        })
         .await
         .expect("detailed list_views");
-    response.entries.as_detailed().expect("detailed mode").clone()
+    response.objects.as_detailed().expect("detailed mode").clone()
 }
 
 #[tokio::test]
@@ -4330,20 +4529,24 @@ async fn test_list_views_search_no_match_returns_empty() {
 async fn test_list_views_brief_wire_shape_unchanged() {
     let handler = handler(true);
     let response = handler
-        .list_views(Some("app".into()), None, None, false)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::View,
+            database: Some("app".into()),
+            ..Default::default()
+        })
         .await
         .expect("list_views");
 
-    let names = response.entries.as_brief().expect("brief mode (Vec<String>)");
+    let names = response.objects.as_brief().expect("brief mode (Vec<String>)");
     assert!(
         names.iter().all(|s| !s.is_empty()),
         "brief mode names must be non-empty strings, got {names:?}"
     );
     let json = serde_json::to_value(&response).expect("serialize");
-    let views = json.get("entries").expect("entries key");
+    let views = json.get("objects").expect("objects key");
     assert!(
         views.is_array(),
-        "brief mode `entries` must be a JSON array, got {views:?}"
+        "brief mode `objects` must be a JSON array, got {views:?}"
     );
 }
 
@@ -4352,7 +4555,12 @@ async fn test_list_views_search_resists_sql_meta_chars() {
     let handler = handler(true);
     for payload in ["'", ";", "--", "`", "\\", "active'; DROP VIEW bad; --"] {
         let result = handler
-            .list_views(Some("app".into()), None, Some(payload.into()), false)
+            .objects(ObjectsRequest {
+                kind: ObjectKind::View,
+                database: Some("app".into()),
+                search: Some(payload.into()),
+                ..Default::default()
+            })
             .await;
         assert!(
             result.is_ok(),
@@ -4365,8 +4573,8 @@ async fn test_list_views_search_resists_sql_meta_chars() {
 #[tokio::test]
 async fn test_list_views_detailed_returns_keyed_object_with_all_fields() {
     let handler = handler(true);
-    let entries = detailed_view_entries(&handler, "active_users").await;
-    let entry = entries.get("active_users").expect("active_users key present");
+    let objects = detailed_view_objects(&handler, "active_users").await;
+    let entry = objects.get("active_users").expect("active_users key present");
 
     for key in [
         "schema",
@@ -4407,8 +4615,8 @@ async fn test_list_views_detailed_returns_keyed_object_with_all_fields() {
 #[tokio::test]
 async fn test_list_views_detailed_check_option_none_for_plain_view() {
     let handler = handler(true);
-    let entries = detailed_view_entries(&handler, "active_users").await;
-    let entry = entries.get("active_users").expect("active_users present");
+    let objects = detailed_view_objects(&handler, "active_users").await;
+    let entry = objects.get("active_users").expect("active_users present");
     assert_eq!(
         entry.get("checkOption").and_then(Value::as_str),
         Some("NONE"),
@@ -4419,14 +4627,14 @@ async fn test_list_views_detailed_check_option_none_for_plain_view() {
 #[tokio::test]
 async fn test_list_views_detailed_check_option_cascaded_and_local() {
     let handler = handler(true);
-    let cascaded_entries = detailed_view_entries(&handler, "active_users_with_check_cascaded").await;
-    let cascaded = cascaded_entries
+    let cascaded_objects = detailed_view_objects(&handler, "active_users_with_check_cascaded").await;
+    let cascaded = cascaded_objects
         .get("active_users_with_check_cascaded")
         .expect("cascaded view present");
     assert_eq!(cascaded.get("checkOption").and_then(Value::as_str), Some("CASCADED"));
 
-    let local_entries = detailed_view_entries(&handler, "active_users_with_check_local").await;
-    let local = local_entries
+    let local_objects = detailed_view_objects(&handler, "active_users_with_check_local").await;
+    let local = local_objects
         .get("active_users_with_check_local")
         .expect("local view present");
     assert_eq!(local.get("checkOption").and_then(Value::as_str), Some("LOCAL"));
@@ -4435,10 +4643,10 @@ async fn test_list_views_detailed_check_option_cascaded_and_local() {
 #[tokio::test]
 async fn test_list_views_detailed_updatable_boolean() {
     let handler = handler(true);
-    let entries = detailed_view_entries(&handler, "active").await;
+    let objects = detailed_view_objects(&handler, "active").await;
 
     assert_eq!(
-        entries
+        objects
             .get("active_users")
             .expect("active_users present")
             .get("updatable")
@@ -4448,7 +4656,7 @@ async fn test_list_views_detailed_updatable_boolean() {
     );
 
     assert_eq!(
-        entries
+        objects
             .get("active_orders")
             .expect("active_orders present")
             .get("updatable")
@@ -4461,9 +4669,9 @@ async fn test_list_views_detailed_updatable_boolean() {
 #[tokio::test]
 async fn test_list_views_detailed_security_modes() {
     let handler = handler(true);
-    let entries = detailed_view_entries(&handler, "archived").await;
+    let objects = detailed_view_objects(&handler, "archived").await;
 
-    let definer = entries.get("archived_users").expect("archived_users present");
+    let definer = objects.get("archived_users").expect("archived_users present");
     assert_eq!(definer.get("security").and_then(Value::as_str), Some("DEFINER"));
     let definer_string = definer.get("definer").and_then(Value::as_str).expect("definer string");
     assert!(
@@ -4471,7 +4679,7 @@ async fn test_list_views_detailed_security_modes() {
         "definer must be user@host form, got {definer_string:?}"
     );
 
-    let invoker = entries
+    let invoker = objects
         .get("archived_users_invoker")
         .expect("archived_users_invoker present");
     assert_eq!(invoker.get("security").and_then(Value::as_str), Some("INVOKER"));
@@ -4480,8 +4688,8 @@ async fn test_list_views_detailed_security_modes() {
 #[tokio::test]
 async fn test_list_views_detailed_definition_is_raw_select_body() {
     let handler = handler(true);
-    let entries = detailed_view_entries(&handler, "active_users").await;
-    let entry = entries.get("active_users").expect("active_users present");
+    let objects = detailed_view_objects(&handler, "active_users").await;
+    let entry = objects.get("active_users").expect("active_users present");
     let definition = entry
         .get("definition")
         .and_then(Value::as_str)
@@ -4505,9 +4713,9 @@ async fn test_list_views_detailed_definition_is_raw_select_body() {
 #[tokio::test]
 async fn test_list_views_detailed_combined_with_search_filters_before_metadata() {
     let handler = handler(true);
-    let entries = detailed_view_entries(&handler, "active").await;
-    assert!(!entries.is_empty(), "search=active must match seeded views");
-    for (name, value) in &entries {
+    let objects = detailed_view_objects(&handler, "active").await;
+    assert!(!objects.is_empty(), "search=active must match seeded views");
+    for (name, value) in &objects {
         assert!(
             name.to_lowercase().contains("active"),
             "non-matching key returned: {name}"
@@ -4523,8 +4731,8 @@ async fn test_list_views_detailed_combined_with_search_filters_before_metadata()
 #[tokio::test]
 async fn test_list_views_detailed_round_trips_body_with_subquery() {
     let handler = handler(true);
-    let entries = detailed_view_entries(&handler, "user_metrics_cte").await;
-    let entry = entries.get("user_metrics_cte").expect("user_metrics_cte present");
+    let objects = detailed_view_objects(&handler, "user_metrics_cte").await;
+    let entry = objects.get("user_metrics_cte").expect("user_metrics_cte present");
     let definition = entry
         .get("definition")
         .and_then(Value::as_str)
@@ -4544,9 +4752,9 @@ async fn test_list_views_detailed_round_trips_body_with_subquery() {
 #[tokio::test]
 async fn test_list_views_detailed_session_context_fields_populated() {
     let handler = handler(true);
-    let entries = detailed_view_entries(&handler, "active").await;
-    assert!(!entries.is_empty(), "seeded views must be present");
-    for (name, value) in &entries {
+    let objects = detailed_view_objects(&handler, "active").await;
+    assert!(!objects.is_empty(), "seeded views must be present");
+    for (name, value) in &objects {
         let charset = value
             .get("characterSetClient")
             .and_then(Value::as_str)
@@ -4602,7 +4810,7 @@ fn handler_with_operator(operator: privacy::Operator) -> MysqlHandler {
 async fn read_query_redacts_email_when_enabled() {
     let handler = handler_with_redaction(true);
     let rows = handler
-        .read_query(
+        .read(
             "SELECT 'ping me at jane.doe@example.com' AS msg".into(),
             None,
             None,
@@ -4618,7 +4826,7 @@ async fn read_query_redacts_email_when_enabled() {
 async fn read_query_unchanged_when_disabled() {
     let handler = handler_with_redaction(false);
     let rows = handler
-        .read_query(
+        .read(
             "SELECT 'ping me at jane.doe@example.com' AS msg".into(),
             None,
             None,
@@ -4633,7 +4841,7 @@ async fn read_query_unchanged_when_disabled() {
 async fn write_query_redacts_when_enabled() {
     let handler = handler_with_redaction(true);
     handler
-        .write_query(
+        .write(
             "INSERT INTO users (name, email) VALUES ('PIIWrite', 'piiwrite@example.com')".into(),
             None,
         )
@@ -4641,7 +4849,7 @@ async fn write_query_redacts_when_enabled() {
         .unwrap();
 
     let rows = handler
-        .read_query(
+        .read(
             "SELECT email FROM users WHERE name = 'PIIWrite'".into(),
             None,
             None,
@@ -4652,7 +4860,7 @@ async fn write_query_redacts_when_enabled() {
     assert_eq!(rows.rows[0]["email"], "<EMAIL_ADDRESS>");
 
     handler_with_redaction(false)
-        .write_query("DELETE FROM users WHERE name = 'PIIWrite'".into(), None)
+        .write("DELETE FROM users WHERE name = 'PIIWrite'".into(), None)
         .await
         .unwrap();
 }
@@ -4661,7 +4869,7 @@ async fn write_query_redacts_when_enabled() {
 async fn explain_query_redacts_when_enabled() {
     let handler = handler_with_redaction(true);
     let rows = handler
-        .explain_query(
+        .explain(
             None,
             "SELECT 'ping me at jane.doe@example.com' AS msg".into(),
             false,
@@ -4680,7 +4888,7 @@ async fn explain_query_redacts_when_enabled() {
 async fn read_query_mask_operator_replaces_with_asterisks() {
     let handler = handler_with_operator(privacy::Operator::Mask);
     let rows = handler
-        .read_query("SELECT 'jane.doe@example.com' AS msg".into(), None, None, None)
+        .read("SELECT 'jane.doe@example.com' AS msg".into(), None, None, None)
         .await
         .unwrap();
     let out = rows.rows[0]["msg"].as_str().unwrap();
@@ -4692,7 +4900,7 @@ async fn read_query_mask_operator_replaces_with_asterisks() {
 async fn read_query_redact_operator_returns_empty_span() {
     let handler = handler_with_operator(privacy::Operator::Redact);
     let rows = handler
-        .read_query("SELECT 'jane.doe@example.com' AS msg".into(), None, None, None)
+        .read("SELECT 'jane.doe@example.com' AS msg".into(), None, None, None)
         .await
         .unwrap();
     assert_eq!(rows.rows[0]["msg"], "");
@@ -4702,7 +4910,7 @@ async fn read_query_redact_operator_returns_empty_span() {
 async fn read_query_hash_operator_emits_keyed_token() {
     let handler = handler_with_operator(privacy::Operator::Hash);
     let rows = handler
-        .read_query(
+        .read(
             "SELECT 'jane.doe@example.com' AS a, 'jane.doe@example.com' AS b".into(),
             None,
             None,
@@ -4722,7 +4930,7 @@ async fn read_query_hash_operator_emits_keyed_token() {
 async fn test_read_numeric_columns_round_trip() {
     let handler = handler(false);
     let rows = handler
-        .read_query(
+        .read(
             "SELECT label, d_small, d_int, d_overflow, f, dbl, u_tiny, u_small, u_medium, u_int, u_big, yr, \
                 bits, flag, uflag FROM numeric_samples ORDER BY id"
                 .into(),
@@ -4801,7 +5009,7 @@ async fn test_read_numeric_columns_round_trip() {
 async fn test_read_decimal_aggregation_exact_precision() {
     let handler = handler(false);
     let rows = handler
-        .read_query(
+        .read(
             "SELECT SUM(d_small) AS total FROM numeric_samples WHERE label IN ('basic', 'trailing_zero', 'overflow')"
                 .into(),
             Some("app".into()),
@@ -4821,7 +5029,7 @@ async fn test_read_decimal_aggregation_exact_precision() {
 async fn test_read_decimal_avg_preserves_precision() {
     let handler = handler(false);
     let rows = handler
-        .read_query(
+        .read(
             "SELECT AVG(d_int) AS avg_int FROM numeric_samples \
                 WHERE label IN ('basic', 'trailing_zero')"
                 .into(),
@@ -4842,7 +5050,7 @@ async fn test_read_decimal_avg_preserves_precision() {
 async fn test_read_float_invalid_math_emits_null() {
     let handler = handler(false);
     let rows = handler
-        .read_query(
+        .read(
             "SELECT 0.0 / 0.0 AS div_zero, \
                        LOG(-1) AS log_neg, \
                        SQRT(-1) AS sqrt_neg"
@@ -4866,7 +5074,7 @@ async fn test_read_float_invalid_math_emits_null() {
 async fn test_read_float_column_full_range() {
     let handler = handler(false);
     let rows = handler
-        .read_query(
+        .read(
             "SELECT label, f FROM numeric_samples ORDER BY id".into(),
             Some("app".into()),
             None,
@@ -4898,20 +5106,20 @@ async fn test_read_only_rejects_side_effecting_functions() {
          BEGIN INSERT INTO ro_probe VALUES (1); RETURN 1; END",
     ] {
         writer
-            .write_query(query.into(), Some("app".into()))
+            .write(query.into(), Some("app".into()))
             .await
             .unwrap_or_else(|e| panic!("{query}: {e:?}"));
     }
 
     let handler = handler(true);
     let response = handler
-        .read_query("SELECT ro_probe_writer()".into(), Some("app".into()), None, None)
+        .read("SELECT ro_probe_writer()".into(), Some("app".into()), None, None)
         .await;
     assert!(response.is_err(), "readQuery must reject a writing function");
 
     // MariaDB evaluates functions while planning, so plain EXPLAIN can run them too.
     let _ = handler
-        .explain_query(
+        .explain(
             Some("app".into()),
             "SELECT * FROM users WHERE id = ro_probe_writer()".into(),
             false,
@@ -4920,7 +5128,7 @@ async fn test_read_only_rejects_side_effecting_functions() {
         .await;
     // ANALYZE runs the statement; with read-only mode off, only the read-only transaction stops the write.
     let _ = writer
-        .explain_query(
+        .explain(
             Some("app".into()),
             "SELECT * FROM users WHERE id = ro_probe_writer()".into(),
             true,
@@ -4929,7 +5137,7 @@ async fn test_read_only_rejects_side_effecting_functions() {
         .await;
 
     let rows = handler
-        .read_query(
+        .read(
             "SELECT COUNT(*) AS n FROM ro_probe".into(),
             Some("app".into()),
             None,
@@ -4941,7 +5149,7 @@ async fn test_read_only_rejects_side_effecting_functions() {
 
     for query in ["DROP FUNCTION ro_probe_writer", "DROP TABLE ro_probe"] {
         writer
-            .write_query(query.into(), Some("app".into()))
+            .write(query.into(), Some("app".into()))
             .await
             .unwrap_or_else(|e| panic!("{query}: {e:?}"));
     }
@@ -4958,7 +5166,7 @@ async fn test_read_only_session_per_connection() {
         let handler = handler(read_only);
         for database in ["app", "analytics"] {
             let rows = handler
-                .read_query(
+                .read(
                     format!("SELECT CAST(@@SESSION.{variable} AS SIGNED) AS ro"),
                     Some(database.into()),
                     None,
@@ -4990,7 +5198,7 @@ async fn test_write_query_reports_rows_affected_and_insert_id() {
     let db = Some("app".to_string());
 
     let insert = handler
-        .write_query(
+        .write(
             "INSERT INTO users (name, email) VALUES ('Counter', 'counter1@test.com'), ('Counter', 'counter2@test.com')"
                 .into(),
             db.clone(),
@@ -5000,7 +5208,7 @@ async fn test_write_query_reports_rows_affected_and_insert_id() {
     assert!(insert.rows.is_empty());
     assert_eq!(insert.rows_affected, 2);
     let first_id = handler
-        .read_query(
+        .read(
             "SELECT MIN(id) AS id FROM users WHERE email LIKE 'counter_@test.com'".into(),
             db.clone(),
             None,
@@ -5017,7 +5225,7 @@ async fn test_write_query_reports_rows_affected_and_insert_id() {
 
     // Matched rows count even when no value changes (sqlx sets CLIENT_FOUND_ROWS).
     let update = handler
-        .write_query(
+        .write(
             "UPDATE users SET name = 'Counter' WHERE email LIKE 'counter_@test.com'".into(),
             db.clone(),
         )
@@ -5027,18 +5235,18 @@ async fn test_write_query_reports_rows_affected_and_insert_id() {
     assert_eq!(update.last_insert_id, None);
 
     let create = handler
-        .write_query("CREATE TABLE counter_ddl (id INT PRIMARY KEY)".into(), db.clone())
+        .write("CREATE TABLE counter_ddl (id INT PRIMARY KEY)".into(), db.clone())
         .await
         .unwrap();
     assert_eq!(create.rows_affected, 0);
     assert_eq!(create.last_insert_id, None);
     handler
-        .write_query("DROP TABLE counter_ddl".into(), db.clone())
+        .write("DROP TABLE counter_ddl".into(), db.clone())
         .await
         .unwrap();
 
     let delete = handler
-        .write_query("DELETE FROM users WHERE email LIKE 'counter_@test.com'".into(), db)
+        .write("DELETE FROM users WHERE email LIKE 'counter_@test.com'".into(), db)
         .await
         .unwrap();
     assert_eq!(delete.rows_affected, 2);
@@ -5067,7 +5275,7 @@ fn handler_with_caps(max_cell_chars: usize, max_response_chars: usize, redact_pr
 async fn read_query_cuts_long_cells_and_reports_truncation() {
     let handler = handler_with_caps(4, 0, false);
     let response = handler
-        .read_query("SELECT 'abcdefghij' AS s".into(), Some("app".into()), None, None)
+        .read("SELECT 'abcdefghij' AS s".into(), Some("app".into()), None, None)
         .await
         .expect("read_query");
     assert_eq!(response.rows[0]["s"], "abcd…[truncated, 10 chars total]");
@@ -5082,7 +5290,7 @@ async fn read_query_response_cap_defers_dropped_rows_to_the_next_page() {
     let query = "SELECT id FROM users ORDER BY id";
 
     let first = handler
-        .read_query(query.into(), Some("app".into()), None, None)
+        .read(query.into(), Some("app".into()), None, None)
         .await
         .expect("read_query");
     assert_eq!(first.rows.len(), 1);
@@ -5099,7 +5307,7 @@ async fn read_query_response_cap_counts_unpaged_rows_it_drops() {
     // A non-`SELECT` cannot resume, so dropped rows are counted instead.
     let handler = handler_with_caps(0, 12, false);
     let response = handler
-        .read_query("DESCRIBE users".into(), Some("app".into()), None, None)
+        .read("DESCRIBE users".into(), Some("app".into()), None, None)
         .await
         .expect("read_query");
     assert_eq!(response.rows.len(), 1);
@@ -5116,7 +5324,7 @@ async fn write_query_response_cap_counts_returned_rows_it_drops() {
     }
     let handler = handler_with_caps(0, 12, false);
     let response = handler
-        .write_query(
+        .write(
             "INSERT INTO users (name, email) VALUES \
              ('CapReturn', 'capreturn1@test.com'), \
              ('CapReturn', 'capreturn2@test.com'), \
@@ -5126,7 +5334,7 @@ async fn write_query_response_cap_counts_returned_rows_it_drops() {
         )
         .await;
     handler
-        .write_query(
+        .write(
             "DELETE FROM users WHERE email LIKE 'capreturn_@test.com'".into(),
             Some("app".into()),
         )
@@ -5144,7 +5352,7 @@ async fn write_query_response_cap_counts_returned_rows_it_drops() {
 async fn read_query_redacts_before_cutting() {
     let handler = handler_with_caps(14, 0, true);
     let response = handler
-        .read_query(
+        .read(
             "SELECT 'contact jane.doe@example.com now' AS msg".into(),
             Some("app".into()),
             None,
@@ -5160,7 +5368,7 @@ async fn read_query_redacts_before_cutting() {
 async fn read_query_default_caps_leave_small_results_unchanged() {
     let handler = handler(true);
     let response = handler
-        .read_query("SELECT 'abc' AS s".into(), Some("app".into()), None, None)
+        .read("SELECT 'abc' AS s".into(), Some("app".into()), None, None)
         .await
         .expect("read_query");
     assert_eq!(response.rows[0]["s"], "abc");
@@ -5219,7 +5427,7 @@ const LATE_ERROR: &str = "SELECT n, (SELECT 1 FROM (SELECT 1 AS x UNION ALL SELE
 async fn test_read_query_pagination_late_error_fails_skipped_page() {
     let handler = handler_with_page_size(2);
     let result = handler
-        .read_query(
+        .read(
             format!("{LATE_ERROR} LIMIT 18446744073709551615"),
             Some("app".into()),
             None,
@@ -5233,7 +5441,7 @@ async fn test_read_query_pagination_late_error_fails_skipped_page() {
 async fn test_read_query_pagination_late_error_spares_merged_first_page() {
     let handler = handler_with_page_size(2);
     let response = handler
-        .read_query(format!("{LATE_ERROR} LIMIT 100"), Some("app".into()), None, None)
+        .read(format!("{LATE_ERROR} LIMIT 100"), Some("app".into()), None, None)
         .await
         .expect("a merged first page stops before the failing row");
     assert_eq!(response.rows.len(), 2);
@@ -5320,7 +5528,7 @@ fn ruled_handler(user: Option<&str>, page_size: u16) -> MysqlHandler {
 
 async fn ruled_read(handler: &MysqlHandler, query: &str) -> Result<Vec<Value>, rmcp::model::ErrorData> {
     handler
-        .read_query(query.into(), None, None, None)
+        .read(query.into(), None, None, None)
         .await
         .map(|response| response.rows)
 }
@@ -5331,7 +5539,7 @@ async fn ruled_refusal(handler: &MysqlHandler, query: &str) -> String {
 
 async fn ruled_write_refusal(handler: &MysqlHandler, query: &str) -> String {
     handler
-        .write_query(query.into(), None)
+        .write(query.into(), None)
         .await
         .expect_err(query)
         .message
@@ -5679,7 +5887,7 @@ async fn column_rules_deny_relations_the_user_cannot_see() {
 async fn column_rules_explain_ruled_relations_returns_pruned_plan() {
     let handler = ruled_handler(None, 100);
     let response = handler
-        .explain_query(None, "SELECT email FROM users WHERE id = 1".into(), false, None)
+        .explain(None, "SELECT email FROM users WHERE id = 1".into(), false, None)
         .await
         .expect("ruled explain");
     let plan = explain_plan(&response.rows);
@@ -5692,7 +5900,7 @@ async fn column_rules_explain_ruled_relations_returns_pruned_plan() {
 async fn column_rules_refuse_explain_analyze_of_ruled_relations() {
     let handler = ruled_handler(None, 100);
     let error = handler
-        .explain_query(None, "SELECT email FROM users WHERE id = 1".into(), true, None)
+        .explain(None, "SELECT email FROM users WHERE id = 1".into(), true, None)
         .await
         .expect_err("ruled analyze");
     // MariaDB refuses every analyze under rules before the planner runs.
@@ -5706,7 +5914,7 @@ async fn column_rules_refuse_explain_analyze_of_ruled_relations() {
 #[tokio::test]
 async fn column_rules_analyze_of_unruled_relations_per_flavour() {
     let result = ruled_handler(None, 100)
-        .explain_query(None, "SELECT id FROM tags".into(), true, None)
+        .explain(None, "SELECT id FROM tags".into(), true, None)
         .await;
     match backend() {
         // The planner cannot read MariaDB's ANALYZE statement, so every one is denied.
@@ -5769,14 +5977,14 @@ async fn column_rules_restore_the_explain_format_after_a_pruned_plan() {
     .expect("handler builds");
     let unruled = async |handler: &MysqlHandler| {
         let response = handler
-            .explain_query(None, "SELECT note FROM audit".into(), false, None)
+            .explain(None, "SELECT note FROM audit".into(), false, None)
             .await
             .expect("unruled explain");
         explain_plan(&response.rows).get("query_block").is_some()
     };
     let before = unruled(&handler).await;
     handler
-        .explain_query(None, "SELECT email FROM users".into(), false, None)
+        .explain(None, "SELECT email FROM users".into(), false, None)
         .await
         .expect("ruled explain");
     assert_eq!(unruled(&handler).await, before, "the server's format version is back");
@@ -5786,7 +5994,7 @@ async fn column_rules_restore_the_explain_format_after_a_pruned_plan() {
 async fn column_rules_refuse_explaining_ruled_columns_in_conditions() {
     let handler = ruled_handler(None, 100);
     let error = handler
-        .explain_query(None, "SELECT id FROM users WHERE email = 'x'".into(), false, None)
+        .explain(None, "SELECT id FROM users WHERE email = 'x'".into(), false, None)
         .await
         .expect_err("ruled condition");
     assert!(error.message.contains("column policy"), "{}", error.message);
@@ -5797,7 +6005,7 @@ async fn column_rules_refuse_explaining_ruled_columns_in_conditions() {
 async fn column_rules_leave_unruled_explain_plans_whole() {
     let handler = ruled_handler(None, 100);
     let response = handler
-        .explain_query(None, "SELECT note FROM audit WHERE note = 'x'".into(), false, None)
+        .explain(None, "SELECT note FROM audit WHERE note = 'x'".into(), false, None)
         .await
         .expect("unruled explain");
     // Unpruned plans keep the server's format version: `MySQL` 9.5+ defaults to 2.
@@ -5840,7 +6048,7 @@ async fn column_rules_redact_returning_rows() {
     let delete = "DELETE FROM policy_hashed WHERE id = 90 RETURNING email";
     if backend() == database::Backend::Mariadb {
         for query in [insert, delete] {
-            let response = handler.write_query(query.into(), None).await.expect(query);
+            let response = handler.write(query.into(), None).await.expect(query);
             assert_eq!(response.rows.len(), 1, "{query}");
             assert!(
                 is_email_token(&response.rows[0]["email"]),
@@ -5929,27 +6137,13 @@ async fn column_rules_refuse_derived_writes_into_same_ruled_columns() {
     assert_eq!(masked_rows(&handler, "policy_masked", "note").await, notes);
 
     let query = "INSERT INTO policy_masked_copy (id, phone) SELECT id + 910, phone FROM policy_masked";
-    assert_eq!(
-        handler
-            .write_query(query.into(), None)
-            .await
-            .expect(query)
-            .rows_affected,
-        2
-    );
+    assert_eq!(handler.write(query.into(), None).await.expect(query).rows_affected, 2);
     assert_eq!(
         masked_rows(&handler, "policy_masked_copy", "phone").await,
         masked_rows(&handler, "policy_masked", "phone").await
     );
     let query = "DELETE FROM policy_masked_copy WHERE id > 900";
-    assert_eq!(
-        handler
-            .write_query(query.into(), None)
-            .await
-            .expect(query)
-            .rows_affected,
-        2
-    );
+    assert_eq!(handler.write(query.into(), None).await.expect(query).rows_affected, 2);
 }
 
 #[tokio::test]
@@ -6032,7 +6226,7 @@ async fn column_rules_allow_same_hash_copies_nulls_and_omitted_hashed_columns() 
         "INSERT INTO policy_hashed (id) VALUES (912)",
         "INSERT INTO policy_hashed (id, email) VALUES (913, DEFAULT)",
     ] {
-        let response = handler.write_query(query.into(), None).await.expect(query);
+        let response = handler.write(query.into(), None).await.expect(query);
         assert_eq!(response.rows_affected, 1, "{query}");
     }
     let copied = stored_token(&handler, "policy_hashed_copy", 910).await;
@@ -6047,7 +6241,7 @@ async fn column_rules_allow_same_hash_copies_nulls_and_omitted_hashed_columns() 
         "DELETE FROM policy_hashed_copy WHERE id = 910",
         "DELETE FROM policy_hashed WHERE id IN (911, 912, 913)",
     ] {
-        handler.write_query(query.into(), None).await.expect(query);
+        handler.write(query.into(), None).await.expect(query);
     }
 }
 
@@ -6055,14 +6249,11 @@ async fn column_rules_allow_same_hash_copies_nulls_and_omitted_hashed_columns() 
 async fn column_rules_keep_positions_across_pages() {
     let handler = ruled_handler(None, 2);
     let query = "SELECT id, email FROM users ORDER BY id";
-    let first = handler
-        .read_query(query.into(), None, None, None)
-        .await
-        .expect("first page");
+    let first = handler.read(query.into(), None, None, None).await.expect("first page");
     assert_eq!(first.rows.len(), 2);
     assert!(first.rows.iter().all(|row| is_email_token(&row["email"])));
     let second = handler
-        .read_query(query.into(), None, first.next_cursor, None)
+        .read(query.into(), None, first.next_cursor, None)
         .await
         .expect("second page");
     assert!(!second.rows.is_empty());
@@ -6114,7 +6305,7 @@ async fn column_rules_replace_and_drop_views() {
         "CREATE OR REPLACE VIEW policy_audit_view AS SELECT id, note FROM audit",
         "DROP VIEW policy_audit_view",
     ] {
-        handler.write_query(query.into(), None).await.expect(query);
+        handler.write(query.into(), None).await.expect(query);
     }
 }
 
@@ -6192,7 +6383,7 @@ async fn column_rules_refuse_writes_reading_views_that_cannot_roll_back() {
         "CREATE TABLE policy_myisam (id INT, name VARCHAR(100)) ENGINE=MyISAM",
         "INSERT INTO policy_myisam (id, name) SELECT id, name FROM users",
     ] {
-        handler.write_query(query.into(), None).await.expect(query);
+        handler.write(query.into(), None).await.expect(query);
     }
     let refusal = ruled_write_refusal(
         &handler,
@@ -6201,7 +6392,7 @@ async fn column_rules_refuse_writes_reading_views_that_cannot_roll_back() {
     .await;
     assert!(refusal.contains("roll back"), "{refusal}");
     for query in ["DROP TABLE policy_copy", "DROP TABLE policy_myisam"] {
-        handler.write_query(query.into(), None).await.expect(query);
+        handler.write(query.into(), None).await.expect(query);
     }
 }
 
@@ -6241,14 +6432,14 @@ async fn write_query_returning_keys_follow_returning_order() {
     }
     let handler = handler(false);
     let response = handler
-        .write_query(
+        .write(
             "INSERT INTO users (name, email) VALUES ('Order', 'order@test.com') RETURNING name, id, email".into(),
             Some("app".into()),
         )
         .await
         .expect("insert");
     handler
-        .write_query(
+        .write(
             "DELETE FROM users WHERE email = 'order@test.com'".into(),
             Some("app".into()),
         )

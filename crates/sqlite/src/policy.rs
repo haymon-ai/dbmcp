@@ -1,6 +1,6 @@
 //! Column rule (`privacy.rules`) enforcement on `SQLite`.
 //!
-//! With column rules, `readQuery`, `writeQuery`, and `explainQuery` run each
+//! With column rules, `read`, `write`, and `explain` run each
 //! statement through [`SqliteHandler::enforce`]. On one connection, inside
 //! one transaction (`BEGIN IMMEDIATE` for writes, so the write lock is held
 //! before anything runs; reads under `PRAGMA query_only`) and under one
@@ -384,7 +384,7 @@ mod tests {
     use sqlx::{AssertSqlSafe, Connection as _};
 
     use super::*;
-    use crate::types::{QueryRequest, ReadQueryRequest};
+    use crate::types::{ReadRequest, WriteRequest};
 
     const KEY: &str = "0123456789abcdef0123456789abcdef";
 
@@ -473,7 +473,7 @@ mod tests {
 
     async fn read(handler: &SqliteHandler, query: &str) -> Result<Vec<Value>, ErrorData> {
         handler
-            .read_query(ReadQueryRequest {
+            .read(ReadRequest {
                 query: query.into(),
                 cursor: None,
                 timeout: None,
@@ -484,7 +484,7 @@ mod tests {
 
     async fn write(handler: &SqliteHandler, query: &str) -> Result<Vec<Value>, ErrorData> {
         handler
-            .write_query(QueryRequest { query: query.into() })
+            .write(WriteRequest { query: query.into() })
             .await
             .map(|response| response.rows)
     }
@@ -826,7 +826,7 @@ mod tests {
         .await
         .expect("setup");
         let error = handler
-            .read_query(ReadQueryRequest {
+            .read(ReadRequest {
                 query: "SELECT count(*) AS c FROM n a, n b, n c".into(),
                 cursor: None,
                 timeout: Some(1),

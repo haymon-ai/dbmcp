@@ -865,7 +865,7 @@ mod tests {
         assert_blocked_all_dialects("CREATE TABLE test (id INT)");
     }
 
-    // === Single-statement guard (explainQuery) ===
+    // === Single-statement guard (explain) ===
 
     fn assert_single_statement_rules(dialect: &impl dialect::Dialect) {
         for sql in [

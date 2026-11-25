@@ -1,22 +1,30 @@
 //! MCP tool: `objects`.
 
+use dbmcp_server::listing;
 use dbmcp_server::types::names_only;
 
 use super::prelude::*;
-use crate::types::{
-    ListEntriesResponse, ListTablesRequest, ListTriggersRequest, ListViewsRequest, ObjectKind, ObjectsRequest,
-};
+use crate::queries;
+use crate::types::{ListObjectsResponse, ObjectKind, ObjectsRequest};
 
 const NAME: &str = "objects";
 const TITLE: &str = "Objects";
 const DESCRIPTION: &str = include_str!("../../assets/tools/objects.md");
+
+fn annotations() -> ToolAnnotations {
+    ToolAnnotations::new()
+        .read_only(true)
+        .destructive(false)
+        .idempotent(true)
+        .open_world(false)
+}
 
 /// Marker type for the `objects` MCP tool.
 pub(crate) struct ObjectsTool;
 
 impl ToolBase for ObjectsTool {
     type Parameter = ObjectsRequest;
-    type Output = ListEntriesResponse;
+    type Output = ListObjectsResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
@@ -40,48 +48,68 @@ impl ToolBase for ObjectsTool {
     }
 
     fn annotations() -> Option<ToolAnnotations> {
-        Some(
-            ToolAnnotations::new()
-                .read_only(true)
-                .destructive(false)
-                .idempotent(true)
-                .open_world(false),
-        )
+        Some(annotations())
     }
 }
 
 impl AsyncTool<SqliteHandler> for ObjectsTool {
     async fn invoke(handler: &SqliteHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        let ObjectsRequest {
+        handler.objects(params).await
+    }
+}
+
+impl SqliteHandler {
+    /// Lists one page of database objects of the requested kind.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-params [`ErrorData`] when `kind: view` gets `search`
+    /// or `detail: full`, and an internal-error [`ErrorData`] if the
+    /// underlying query fails.
+    pub async fn objects(
+        &self,
+        ObjectsRequest {
             kind,
             search,
             detail,
             cursor,
-        } = params;
+        }: ObjectsRequest,
+    ) -> Result<ListObjectsResponse, ErrorData> {
+        let page_size = self.config.page_size;
+        let search = search.as_deref();
         let detailed = detail.is_full();
         match kind {
             ObjectKind::Table => {
-                handler
-                    .list_tables(ListTablesRequest {
-                        cursor,
-                        search,
-                        detailed,
-                    })
-                    .await
+                listing::list_objects(
+                    cursor,
+                    page_size,
+                    search,
+                    detailed,
+                    async |page, pattern| queries::tables::names(&self.connection, page, pattern).await,
+                    async |page, pattern| queries::tables::details(&self.connection, page, pattern).await,
+                )
+                .await
             }
             ObjectKind::View => {
-                names_only("view", search.as_deref(), detail)?;
-                handler.list_views(ListViewsRequest { cursor }).await
+                names_only("view", search, detail)?;
+                let (views, next_cursor) = listing::paginate(cursor, page_size, async |page| {
+                    queries::views::names(&self.connection, page).await
+                })
+                .await?;
+                return Ok(ListObjectsResponse::brief(views, next_cursor));
             }
             ObjectKind::Trigger => {
-                handler
-                    .list_triggers(ListTriggersRequest {
-                        cursor,
-                        search,
-                        detailed,
-                    })
-                    .await
+                listing::list_objects(
+                    cursor,
+                    page_size,
+                    search,
+                    detailed,
+                    async |page, pattern| queries::triggers::names(&self.connection, page, pattern).await,
+                    async |page, pattern| queries::triggers::details(&self.connection, page, pattern).await,
+                )
+                .await
             }
         }
+        .map_err(Into::into)
     }
 }

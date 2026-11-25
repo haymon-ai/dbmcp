@@ -2,25 +2,25 @@
 
 use dbmcp_privacy::MaybeRedact as _;
 use dbmcp_server::truncate::{Truncation, caps};
-use dbmcp_server::types::QueryResponse;
+use dbmcp_server::types::ExplainResponse;
 use dbmcp_sql::validation::validate_single_statement;
 use dbmcp_truncate::{Window, fit};
 
 use super::prelude::*;
 use crate::queries;
-use crate::types::ExplainQueryRequest;
+use crate::types::ExplainRequest;
 use dbmcp_policy::Access;
 
 const NAME: &str = "explain";
 const TITLE: &str = "Explain";
-const DESCRIPTION: &str = include_str!("../../assets/tools/explain_query.md");
+const DESCRIPTION: &str = include_str!("../../assets/tools/explain.md");
 
-/// Marker type for the `explainQuery` MCP tool.
-pub(crate) struct ExplainQueryTool;
+/// Marker type for the `explain` MCP tool.
+pub(crate) struct ExplainTool;
 
-impl ToolBase for ExplainQueryTool {
-    type Parameter = ExplainQueryRequest;
-    type Output = QueryResponse;
+impl ToolBase for ExplainTool {
+    type Parameter = ExplainRequest;
+    type Output = ExplainResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
@@ -54,9 +54,9 @@ impl ToolBase for ExplainQueryTool {
     }
 }
 
-impl AsyncTool<SqliteHandler> for ExplainQueryTool {
+impl AsyncTool<SqliteHandler> for ExplainTool {
     async fn invoke(handler: &SqliteHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler.explain_query(params).await
+        handler.explain(params).await
     }
 }
 
@@ -75,10 +75,7 @@ impl SqliteHandler {
     ///
     /// [`SqlError::MultiStatement`]: dbmcp_sql::SqlError::MultiStatement
     /// [`SqlError::Query`]: dbmcp_sql::SqlError::Query
-    pub async fn explain_query(
-        &self,
-        ExplainQueryRequest { query }: ExplainQueryRequest,
-    ) -> Result<QueryResponse, ErrorData> {
+    pub async fn explain(&self, ExplainRequest { query }: ExplainRequest) -> Result<ExplainResponse, ErrorData> {
         validate_single_statement(&query, &sqlparser::dialect::SQLiteDialect {})?;
 
         let explain_sql = queries::explain::statement(&query);
@@ -108,7 +105,7 @@ impl SqliteHandler {
         };
         let fitted = fit(rows, caps);
 
-        Ok(QueryResponse {
+        Ok(ExplainResponse {
             rows: fitted.items,
             truncation: Truncation::new(fitted.cut, fitted.dropped.saturating_add(window.rest)),
         })

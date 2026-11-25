@@ -563,9 +563,9 @@ mod tests {
     fn reserved_chars_cover_the_envelope_and_every_field_beside_rows() {
         use crate::listing::Cursor;
         use crate::truncate::{HINT, RESERVED_CHARS, Truncation};
-        use crate::types::{ReadQueryResponse, WriteQueryResponse};
+        use crate::types::{ReadResponse, WriteResponse};
 
-        let read = serde_json::to_value(ReadQueryResponse {
+        let read = serde_json::to_value(ReadResponse {
             rows: Vec::new(),
             next_cursor: Some(Cursor { offset: u64::MAX }),
             truncation: Truncation {
@@ -575,7 +575,7 @@ mod tests {
             },
         })
         .expect("serialize");
-        let write = serde_json::to_value(WriteQueryResponse {
+        let write = serde_json::to_value(WriteResponse {
             rows: Vec::new(),
             rows_affected: u64::MAX,
             last_insert_id: Some(u64::MAX),

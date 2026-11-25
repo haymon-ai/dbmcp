@@ -14,10 +14,7 @@ mod probe;
 mod rows;
 
 use dbmcp_sqlite::SqliteHandler;
-use dbmcp_sqlite::types::{
-    DropTableRequest, ExplainQueryRequest, ListTablesRequest, ListTriggersRequest, ListViewsRequest, QueryRequest,
-    ReadQueryRequest,
-};
+use dbmcp_sqlite::types::{Detail, ExplainRequest, ObjectKind, ObjectsRequest, ReadRequest, WriteRequest};
 use dbmcp_types::{Config, Transport, database, privacy};
 use rmcp::ServiceExt;
 use rmcp::model::CallToolRequestParams;
@@ -65,79 +62,79 @@ fn handler_with_page_size(page_size: u16) -> SqliteHandler {
 async fn test_write_query_insert_and_verify() {
     let handler = handler(false);
 
-    let insert = QueryRequest {
+    let insert = WriteRequest {
         query: "INSERT INTO users (name, email) VALUES ('WriteTest', 'write@test.com')".into(),
     };
-    handler.write_query(insert).await.unwrap();
+    handler.write(insert).await.unwrap();
 
     // Verify
-    let select = ReadQueryRequest {
+    let select = ReadRequest {
         query: "SELECT name FROM users WHERE email = 'write@test.com'".into(),
         cursor: None,
         timeout: None,
     };
-    let rows = handler.read_query(select).await.unwrap();
+    let rows = handler.read(select).await.unwrap();
     let arr = &rows.rows;
     assert_eq!(arr.len(), 1);
     assert_eq!(arr[0]["name"], "WriteTest");
 
     // Clean up
-    let delete = QueryRequest {
+    let delete = WriteRequest {
         query: "DELETE FROM users WHERE email = 'write@test.com'".into(),
     };
-    handler.write_query(delete).await.unwrap();
+    handler.write(delete).await.unwrap();
 }
 
 #[tokio::test]
 async fn test_write_query_update() {
     let handler = handler(false);
 
-    let insert = QueryRequest {
+    let insert = WriteRequest {
         query: "INSERT INTO users (name, email) VALUES ('Before', 'update@test.com')".into(),
     };
-    handler.write_query(insert).await.unwrap();
+    handler.write(insert).await.unwrap();
 
-    let update = QueryRequest {
+    let update = WriteRequest {
         query: "UPDATE users SET name = 'After' WHERE email = 'update@test.com'".into(),
     };
-    handler.write_query(update).await.unwrap();
+    handler.write(update).await.unwrap();
 
-    let select = ReadQueryRequest {
+    let select = ReadRequest {
         query: "SELECT name FROM users WHERE email = 'update@test.com'".into(),
         cursor: None,
         timeout: None,
     };
-    let rows = handler.read_query(select).await.unwrap();
+    let rows = handler.read(select).await.unwrap();
     let arr = &rows.rows;
     assert_eq!(arr[0]["name"], "After");
 
     // Clean up
-    let delete = QueryRequest {
+    let delete = WriteRequest {
         query: "DELETE FROM users WHERE email = 'update@test.com'".into(),
     };
-    handler.write_query(delete).await.unwrap();
+    handler.write(delete).await.unwrap();
 }
 
 #[tokio::test]
 async fn test_write_query_delete() {
     let handler = handler(false);
 
-    let insert = QueryRequest {
+    let insert = WriteRequest {
         query: "INSERT INTO users (name, email) VALUES ('Deletable', 'delete@test.com')".into(),
     };
-    handler.write_query(insert).await.unwrap();
+    handler.write(insert).await.unwrap();
 
-    let delete = QueryRequest {
+    let delete = WriteRequest {
         query: "DELETE FROM users WHERE email = 'delete@test.com'".into(),
     };
-    handler.write_query(delete).await.unwrap();
+    handler.write(delete).await.unwrap();
 
-    let select = ReadQueryRequest {
+    let select = ReadRequest {
         query: "SELECT * FROM users WHERE email = 'delete@test.com'".into(),
         cursor: None,
         timeout: None,
     };
-    let rows = handler.read_query(select).await.unwrap();
+    let rows = handler.read(select).await.unwrap();
     let arr = &rows.rows;
     assert!(arr.is_empty(), "Row should be deleted");
 }
@@ -146,8 +143,8 @@ async fn test_write_query_delete() {
 async fn test_lists_tables() {
     let handler = handler(false);
 
-    let response = handler.list_tables(ListTablesRequest::default()).await.unwrap();
-    let tables = response.entries.as_brief().expect("brief mode");
+    let response = handler.objects(ObjectsRequest::default()).await.unwrap();
+    let tables = response.objects.as_brief().expect("brief mode");
 
     for expected in ["users", "posts", "tags", "post_tags"] {
         assert!(
@@ -160,26 +157,26 @@ async fn test_lists_tables() {
 #[tokio::test]
 async fn test_executes_sql() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
+    let request = ReadRequest {
         query: "SELECT * FROM users ORDER BY id".into(),
         cursor: None,
         timeout: None,
     };
 
-    let response = handler.read_query(request).await.unwrap();
+    let response = handler.read(request).await.unwrap();
     assert_eq!(response.rows.len(), 3, "Expected 3 users, got {}", response.rows.len());
 }
 
 #[tokio::test]
 async fn test_blocks_writes_in_read_only_mode() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
+    let request = ReadRequest {
         query: "INSERT INTO users (name, email) VALUES ('Hacker', 'hack@evil.com')".into(),
         cursor: None,
         timeout: None,
     };
 
-    let response = handler.read_query(request).await;
+    let response = handler.read(request).await;
 
     assert!(response.is_err(), "Expected error for write in read-only mode");
 }
@@ -198,13 +195,13 @@ async fn test_query_timeout_fast_query_succeeds() {
         ssh: None,
     })
     .expect("handler builds");
-    let request = ReadQueryRequest {
+    let request = ReadRequest {
         query: "SELECT 1 AS value".into(),
         cursor: None,
         timeout: None,
     };
 
-    let response = handler.read_query(request).await;
+    let response = handler.read(request).await;
     assert!(response.is_ok(), "Fast query should succeed within timeout");
 }
 
@@ -223,15 +220,15 @@ async fn test_read_query_timeout_argument() {
         ssh: None,
     })
     .expect("handler builds");
-    let request = |timeout| ReadQueryRequest {
+    let request = |timeout| ReadRequest {
         query: "SELECT 1 AS value".into(),
         cursor: None,
         timeout: Some(timeout),
     };
 
-    let response = handler.read_query(request(1)).await;
+    let response = handler.read(request(1)).await;
     assert!(response.is_ok(), "fast query succeeds with a 1s timeout");
-    let err = handler.read_query(request(11)).await.expect_err("above the cap");
+    let err = handler.read(request(11)).await.expect_err("above the cap");
     assert_eq!(err.message, "timeout 11s exceeds the maximum of 10s");
 }
 
@@ -249,13 +246,13 @@ async fn test_query_timeout_disabled_with_zero() {
         ssh: None,
     })
     .expect("handler builds");
-    let request = ReadQueryRequest {
+    let request = ReadRequest {
         query: "SELECT * FROM users ORDER BY id".into(),
         cursor: None,
         timeout: None,
     };
 
-    let response = handler.read_query(request).await;
+    let response = handler.read(request).await;
     assert!(response.is_ok(), "Query should succeed without timeout");
 }
 
@@ -274,29 +271,26 @@ async fn test_query_timeout_stops_long_statement() {
     })
     .expect("handler builds");
     // Counting an endless recursive CTE yields no row until the statement ends.
-    let endless = ReadQueryRequest {
+    let endless = ReadRequest {
         query: "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT COUNT(*) AS n FROM c".into(),
         cursor: None,
         timeout: None,
     };
-    let fast = ReadQueryRequest {
+    let fast = ReadRequest {
         query: "SELECT 1 AS value".into(),
         cursor: None,
         timeout: None,
     };
 
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        let error = handler
-            .read_query(endless)
-            .await
-            .expect_err("endless query must time out");
+        let error = handler.read(endless).await.expect_err("endless query must time out");
         assert!(
             error.message.contains("Query timed out"),
             "unexpected error: {}",
             error.message
         );
         handler
-            .read_query(fast)
+            .read(fast)
             .await
             .expect("connection is usable after the timeout");
     })
@@ -305,50 +299,13 @@ async fn test_query_timeout_stops_long_statement() {
 }
 
 #[tokio::test]
-async fn test_drop_table_success() {
-    let handler = handler(false);
-
-    // Create a temporary table
-    let create = QueryRequest {
-        query: "CREATE TABLE drop_test_simple (id INTEGER PRIMARY KEY)".into(),
-    };
-    handler.write_query(create).await.unwrap();
-
-    // Drop it
-    let drop_request = DropTableRequest {
-        table: "drop_test_simple".into(),
-    };
-    let response = handler.drop_table(drop_request).await.unwrap();
-    assert!(response.message.contains("dropped successfully"));
-
-    // Verify it's gone
-    let response = handler.list_tables(ListTablesRequest::default()).await.unwrap();
-    let tables = response.entries.as_brief().expect("brief mode");
-    assert!(
-        !tables.iter().any(|t| t == "drop_test_simple"),
-        "Table should not exist after drop"
-    );
-}
-
-#[tokio::test]
-async fn test_drop_table_nonexistent() {
-    let handler = handler(false);
-    let drop_request = DropTableRequest {
-        table: "nonexistent_table_xyz".into(),
-    };
-
-    let response = handler.drop_table(drop_request).await;
-    assert!(response.is_err(), "Expected error for nonexistent table");
-}
-
-#[tokio::test]
 async fn test_explain_query_select() {
     let handler = handler(false);
-    let request = ExplainQueryRequest {
+    let request = ExplainRequest {
         query: "SELECT * FROM users".into(),
     };
 
-    let response = handler.explain_query(request).await.unwrap();
+    let response = handler.explain(request).await.unwrap();
     let plan = &response.rows;
     assert!(!plan.is_empty(), "Expected non-empty execution plan");
 }
@@ -356,11 +313,11 @@ async fn test_explain_query_select() {
 #[tokio::test]
 async fn test_explain_query_with_join() {
     let handler = handler(false);
-    let request = ExplainQueryRequest {
+    let request = ExplainRequest {
         query: "SELECT p.title, u.name FROM posts p JOIN users u ON p.user_id = u.id".into(),
     };
 
-    let response = handler.explain_query(request).await.unwrap();
+    let response = handler.explain(request).await.unwrap();
     let plan = &response.rows;
     assert!(!plan.is_empty(), "EXPLAIN QUERY PLAN should return plan for JOIN query");
 }
@@ -368,22 +325,22 @@ async fn test_explain_query_with_join() {
 #[tokio::test]
 async fn test_explain_query_invalid_sql() {
     let handler = handler(false);
-    let request = ExplainQueryRequest {
+    let request = ExplainRequest {
         query: "NOT VALID SQL AT ALL".into(),
     };
 
-    let response = handler.explain_query(request).await;
+    let response = handler.explain(request).await;
     assert!(response.is_err(), "Expected error for invalid SQL");
 }
 
 #[tokio::test]
 async fn test_explain_query_multi_statement_blocked() {
     let handler = handler(true);
-    let request = ExplainQueryRequest {
+    let request = ExplainRequest {
         query: "SELECT 1; CREATE TABLE readonly_probe_explain(i int)".into(),
     };
 
-    let response = handler.explain_query(request).await;
+    let response = handler.explain(request).await;
     let err_msg = format!(
         "{:?}",
         response.expect_err("Expected multi-statement EXPLAIN to be blocked")
@@ -393,74 +350,65 @@ async fn test_explain_query_multi_statement_blocked() {
         "Expected multi-statement error, got: {err_msg}"
     );
 
-    let select = ReadQueryRequest {
+    let select = ReadRequest {
         query: "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'readonly_probe_explain'"
             .into(),
         cursor: None,
         timeout: None,
     };
-    let rows = handler.read_query(select).await.unwrap();
+    let rows = handler.read(select).await.unwrap();
     assert_eq!(rows.rows[0]["n"], 0, "Second statement must not have executed");
-}
-
-#[tokio::test]
-async fn test_drop_table_invalid_identifier() {
-    let handler = handler(false);
-    let drop_request = DropTableRequest { table: String::new() };
-
-    let response = handler.drop_table(drop_request).await;
-    assert!(response.is_err(), "Expected error for empty table name");
 }
 
 #[tokio::test]
 async fn test_read_query_empty_query() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
+    let request = ReadRequest {
         query: String::new(),
         cursor: None,
         timeout: None,
     };
 
-    let response = handler.read_query(request).await;
+    let response = handler.read(request).await;
     assert!(response.is_err(), "Expected error for empty query");
 }
 
 #[tokio::test]
 async fn test_read_query_whitespace_only_query() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
+    let request = ReadRequest {
         query: "   \t\n  ".into(),
         cursor: None,
         timeout: None,
     };
 
-    let response = handler.read_query(request).await;
+    let response = handler.read(request).await;
     assert!(response.is_err(), "Expected error for whitespace-only query");
 }
 
 #[tokio::test]
 async fn test_read_query_multi_statement_blocked() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
+    let request = ReadRequest {
         query: "SELECT 1; DROP TABLE users".into(),
         cursor: None,
         timeout: None,
     };
 
-    let response = handler.read_query(request).await;
+    let response = handler.read(request).await;
     assert!(response.is_err(), "Expected error for multi-statement query");
 }
 
 #[tokio::test]
 async fn test_read_query_into_outfile_blocked() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
+    let request = ReadRequest {
         query: "SELECT * FROM users INTO OUTFILE '/tmp/out'".into(),
         cursor: None,
         timeout: None,
     };
 
-    let response = handler.read_query(request).await;
+    let response = handler.read(request).await;
     assert!(response.is_err(), "Expected error for INTO OUTFILE");
 }
 
@@ -471,7 +419,7 @@ async fn test_read_query_explain_write_blocked() {
         "EXPLAIN DELETE FROM users WHERE id < 0",
         "EXPLAIN QUERY PLAN DELETE FROM users WHERE id < 0",
     ] {
-        let request = ReadQueryRequest {
+        let request = ReadRequest {
             query: sql.into(),
             cursor: None,
             timeout: None,
@@ -479,7 +427,7 @@ async fn test_read_query_explain_write_blocked() {
         let err_msg = format!(
             "{:?}",
             handler
-                .read_query(request)
+                .read(request)
                 .await
                 .expect_err("Expected EXPLAIN write to be blocked")
         );
@@ -489,15 +437,12 @@ async fn test_read_query_explain_write_blocked() {
         );
     }
 
-    let request = ReadQueryRequest {
+    let request = ReadRequest {
         query: "EXPLAIN QUERY PLAN SELECT * FROM users".into(),
         cursor: None,
         timeout: None,
     };
-    assert!(
-        handler.read_query(request).await.is_ok(),
-        "EXPLAIN of a read must still work"
-    );
+    assert!(handler.read(request).await.is_ok(), "EXPLAIN of a read must still work");
 }
 
 #[tokio::test]
@@ -507,7 +452,7 @@ async fn test_read_query_dangerous_functions_blocked() {
         "SELECT load_extension('/tmp/evil.so')",
         "SELECT writefile('/tmp/x', 'data')",
     ] {
-        let request = ReadQueryRequest {
+        let request = ReadRequest {
             query: sql.into(),
             cursor: None,
             timeout: None,
@@ -515,7 +460,7 @@ async fn test_read_query_dangerous_functions_blocked() {
         let err_msg = format!(
             "{:?}",
             handler
-                .read_query(request)
+                .read(request)
                 .await
                 .expect_err("Expected dangerous function to be blocked")
         );
@@ -529,13 +474,13 @@ async fn test_read_query_dangerous_functions_blocked() {
 #[tokio::test]
 async fn test_read_query_with_join() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
+    let request = ReadRequest {
         query: "SELECT p.title, u.name FROM posts p JOIN users u ON p.user_id = u.id ORDER BY p.id".into(),
         cursor: None,
         timeout: None,
     };
 
-    let response = handler.read_query(request).await.unwrap();
+    let response = handler.read(request).await.unwrap();
     let rows = &response.rows;
     assert!(!rows.is_empty(), "JOIN query should return results");
     assert!(rows[0].get("title").is_some(), "Should have title column");
@@ -546,36 +491,36 @@ async fn test_read_query_with_join() {
 async fn test_write_query_create_table() {
     let handler = handler(false);
 
-    let create = QueryRequest {
+    let create = WriteRequest {
         query: "CREATE TABLE write_test_create (id INTEGER PRIMARY KEY, value TEXT)".into(),
     };
-    handler.write_query(create).await.unwrap();
+    handler.write(create).await.unwrap();
 
     // Verify it appears in list_tables
-    let response = handler.list_tables(ListTablesRequest::default()).await.unwrap();
-    let tables = response.entries.as_brief().expect("brief mode");
+    let response = handler.objects(ObjectsRequest::default()).await.unwrap();
+    let tables = response.objects.as_brief().expect("brief mode");
     assert!(
         tables.iter().any(|t| t == "write_test_create"),
         "Created table should appear in list"
     );
 
     // Clean up
-    let drop = DropTableRequest {
-        table: "write_test_create".into(),
+    let drop = WriteRequest {
+        query: "DROP TABLE write_test_create".into(),
     };
-    handler.drop_table(drop).await.unwrap();
+    handler.write(drop).await.unwrap();
 }
 
 #[tokio::test]
 async fn test_read_query_empty_result_set() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
+    let request = ReadRequest {
         query: "SELECT * FROM users WHERE email = 'nobody@nowhere.com'".into(),
         cursor: None,
         timeout: None,
     };
 
-    let response = handler.read_query(request).await.unwrap();
+    let response = handler.read(request).await.unwrap();
     let rows = &response.rows;
     assert!(rows.is_empty(), "Expected empty result set");
 }
@@ -583,13 +528,13 @@ async fn test_read_query_empty_result_set() {
 #[tokio::test]
 async fn test_read_query_aggregate() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
+    let request = ReadRequest {
         query: "SELECT COUNT(*) AS total FROM users".into(),
         cursor: None,
         timeout: None,
     };
 
-    let response = handler.read_query(request).await.unwrap();
+    let response = handler.read(request).await.unwrap();
     let rows = &response.rows;
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["total"], 3);
@@ -598,13 +543,13 @@ async fn test_read_query_aggregate() {
 #[tokio::test]
 async fn test_read_query_group_by() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
+    let request = ReadRequest {
         query: "SELECT user_id, COUNT(*) AS post_count FROM posts GROUP BY user_id ORDER BY user_id".into(),
         cursor: None,
         timeout: None,
     };
 
-    let response = handler.read_query(request).await.unwrap();
+    let response = handler.read(request).await.unwrap();
     let rows = &response.rows;
     assert!(rows.len() >= 2, "Expected at least 2 groups");
 }
@@ -612,13 +557,13 @@ async fn test_read_query_group_by() {
 #[tokio::test]
 async fn test_read_query_with_comments() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
+    let request = ReadRequest {
         query: "/* fetch users */ SELECT * FROM users ORDER BY id".into(),
         cursor: None,
         timeout: None,
     };
 
-    let response = handler.read_query(request).await.unwrap();
+    let response = handler.read(request).await.unwrap();
     let rows = &response.rows;
     assert_eq!(rows.len(), 3, "Comment-prefixed SELECT should work");
 }
@@ -626,13 +571,13 @@ async fn test_read_query_with_comments() {
 #[tokio::test]
 async fn test_read_query_subquery() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
+    let request = ReadRequest {
         query: "SELECT * FROM users WHERE id IN (SELECT user_id FROM posts WHERE published = 1)".into(),
         cursor: None,
         timeout: None,
     };
 
-    let response = handler.read_query(request).await.unwrap();
+    let response = handler.read(request).await.unwrap();
     let rows = &response.rows;
     assert!(!rows.is_empty(), "Subquery should return results");
 }
@@ -640,24 +585,24 @@ async fn test_read_query_subquery() {
 #[tokio::test]
 async fn test_write_query_invalid_sql() {
     let handler = handler(false);
-    let request = QueryRequest {
+    let request = WriteRequest {
         query: "NOT VALID SQL AT ALL".into(),
     };
 
-    let response = handler.write_query(request).await;
+    let response = handler.write(request).await;
     assert!(response.is_err(), "Expected error for invalid SQL in write_query");
 }
 
 #[tokio::test]
 async fn test_read_query_with_limit() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
+    let request = ReadRequest {
         query: "SELECT * FROM users ORDER BY id LIMIT 2".into(),
         cursor: None,
         timeout: None,
     };
 
-    let response = handler.read_query(request).await.unwrap();
+    let response = handler.read(request).await.unwrap();
     let rows = &response.rows;
     assert_eq!(rows.len(), 2, "LIMIT 2 should return exactly 2 rows");
 }
@@ -665,13 +610,13 @@ async fn test_read_query_with_limit() {
 #[tokio::test]
 async fn test_read_query_with_line_comment() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
+    let request = ReadRequest {
         query: "-- get users\nSELECT * FROM users ORDER BY id".into(),
         cursor: None,
         timeout: None,
     };
 
-    let response = handler.read_query(request).await.unwrap();
+    let response = handler.read(request).await.unwrap();
     let rows = &response.rows;
     assert_eq!(rows.len(), 3, "Line-comment prefixed SELECT should work");
 }
@@ -679,81 +624,41 @@ async fn test_read_query_with_line_comment() {
 #[tokio::test]
 async fn test_read_query_null_values() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
+    let request = ReadRequest {
         query: "SELECT title, body FROM posts WHERE title = 'My First Post'".into(),
         cursor: None,
         timeout: None,
     };
 
-    let response = handler.read_query(request).await.unwrap();
+    let response = handler.read(request).await.unwrap();
     let rows = &response.rows;
     assert_eq!(rows.len(), 1);
     assert!(rows[0].get("body").is_some(), "body column should be present");
 }
 
 #[tokio::test]
-async fn test_drop_table_blocked_in_read_only() {
-    let handler = handler(true);
-    let drop_request = DropTableRequest { table: "users".into() };
-
-    let response = handler.drop_table(drop_request).await;
-    assert!(response.is_err(), "drop_table should be blocked in read-only mode");
-}
-
-#[tokio::test]
 async fn test_list_tables_returns_empty_for_no_match() {
     let handler = handler(true);
-    let request = ReadQueryRequest {
+    let request = ReadRequest {
         query: "SELECT name FROM sqlite_master WHERE type='table' AND name='nonexistent_xyz'".into(),
         cursor: None,
         timeout: None,
     };
-    let result = handler.read_query(request).await.unwrap();
+    let result = handler.read(request).await.unwrap();
     let rows = &result.rows;
     assert!(rows.is_empty(), "query for nonexistent table should return empty array");
-}
-
-#[tokio::test]
-async fn test_create_drop_table_with_spaces() {
-    let handler = handler(false);
-
-    let create = QueryRequest {
-        query: "CREATE TABLE \"table with spaces\" (id INTEGER PRIMARY KEY, name TEXT)".into(),
-    };
-    handler.write_query(create).await.unwrap();
-
-    // Use the enriched listTables in detailed mode to confirm the table is visible
-    // with its metadata, exercising identifier handling for spaced names end-to-end.
-    let response = handler
-        .list_tables(ListTablesRequest {
-            search: Some("table with spaces".into()),
-            detailed: true,
-            ..Default::default()
-        })
-        .await
-        .expect("detailed listTables with spaced name");
-    let entries = response.entries.as_detailed().expect("detailed mode");
-    assert!(
-        entries.contains_key("table with spaces"),
-        "spaced-name table must surface as a keyed entry: {entries:?}"
-    );
-
-    let drop = DropTableRequest {
-        table: "table with spaces".into(),
-    };
-    handler.drop_table(drop).await.unwrap();
 }
 
 async fn collect_all_paged(handler: &SqliteHandler) -> Vec<String> {
     let mut all = Vec::new();
     let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
-        let request = ListTablesRequest {
+        let request = ObjectsRequest {
             cursor,
             ..Default::default()
         };
-        let response = handler.list_tables(request).await.expect("list page");
-        let page = response.entries.as_brief().expect("brief mode").to_vec();
+        let response = handler.objects(request).await.expect("list page");
+        let page = response.objects.as_brief().expect("brief mode").to_vec();
         all.extend(page);
         match response.next_cursor {
             Some(c) => cursor = Some(c),
@@ -771,10 +676,10 @@ async fn test_list_tables_pagination_traverses_pages() {
     let collected = collect_all_paged(&handler_paged).await;
 
     let single_page = handler_full
-        .list_tables(ListTablesRequest::default())
+        .objects(ObjectsRequest::default())
         .await
         .expect("single page");
-    let single_page_vec = single_page.entries.as_brief().expect("brief mode").to_vec();
+    let single_page_vec = single_page.objects.as_brief().expect("brief mode").to_vec();
 
     assert_eq!(
         collected, single_page_vec,
@@ -787,7 +692,7 @@ async fn test_list_tables_pagination_traverses_pages() {
 #[tokio::test]
 async fn test_list_tables_pagination_small_table_set_no_next_cursor() {
     let handler = handler(true);
-    let response = handler.list_tables(ListTablesRequest::default()).await.unwrap();
+    let response = handler.objects(ObjectsRequest::default()).await.unwrap();
     assert!(
         response.next_cursor.is_none(),
         "seeded fixture below default page_size must not emit nextCursor"
@@ -798,20 +703,17 @@ async fn test_list_tables_pagination_small_table_set_no_next_cursor() {
 async fn test_list_tables_pagination_boundary_page_size_equals_total() {
     let handler_full = handler(true);
     let total = handler_full
-        .list_tables(ListTablesRequest::default())
+        .objects(ObjectsRequest::default())
         .await
         .expect("discover total")
-        .entries
+        .objects
         .len();
     let page_size = u16::try_from(total).expect("seed total fits in u16");
 
     let handler_boundary = handler_with_page_size(page_size);
-    let response = handler_boundary
-        .list_tables(ListTablesRequest::default())
-        .await
-        .unwrap();
+    let response = handler_boundary.objects(ObjectsRequest::default()).await.unwrap();
     assert_eq!(
-        response.entries.len(),
+        response.objects.len(),
         total,
         "page_size equal to total must return everything on one page"
     );
@@ -826,16 +728,16 @@ async fn test_list_tables_pagination_off_the_end_cursor_returns_empty_page() {
     use dbmcp_server::listing::Cursor;
 
     let handler = handler(true);
-    let request = ListTablesRequest {
+    let request = ObjectsRequest {
         cursor: Some(Cursor { offset: 10_000 }),
         ..Default::default()
     };
-    let response = handler.list_tables(request).await.unwrap();
+    let response = handler.objects(request).await.unwrap();
 
     assert!(
-        response.entries.is_empty(),
+        response.objects.is_empty(),
         "off-the-end cursor must return empty tables, got {:?}",
-        response.entries
+        response.objects
     );
     assert!(response.next_cursor.is_none(), "off-the-end must not emit nextCursor");
 }
@@ -843,11 +745,8 @@ async fn test_list_tables_pagination_off_the_end_cursor_returns_empty_page() {
 #[tokio::test]
 async fn test_list_tables_respects_configured_page_size() {
     let handler = handler_with_page_size(2);
-    let first = handler
-        .list_tables(ListTablesRequest::default())
-        .await
-        .expect("first page");
-    assert_eq!(first.entries.len(), 2, "configured page_size=2 must cap page 1");
+    let first = handler.objects(ObjectsRequest::default()).await.expect("first page");
+    assert_eq!(first.objects.len(), 2, "configured page_size=2 must cap page 1");
     assert!(
         first.next_cursor.is_some(),
         "page 1 must emit nextCursor when total > page_size"
@@ -857,11 +756,8 @@ async fn test_list_tables_respects_configured_page_size() {
 #[tokio::test]
 async fn test_list_tables_respects_configured_page_size_minimum() {
     let handler = handler_with_page_size(1);
-    let first = handler
-        .list_tables(ListTablesRequest::default())
-        .await
-        .expect("first page");
-    assert_eq!(first.entries.len(), 1, "page_size=1 must return one table per page");
+    let first = handler.objects(ObjectsRequest::default()).await.expect("first page");
+    assert_eq!(first.objects.len(), 1, "page_size=1 must return one table per page");
     assert!(first.next_cursor.is_some(), "page 1 must emit nextCursor");
 }
 
@@ -881,7 +777,7 @@ async fn test_list_tables_pagination_invalid_cursor_rejected_at_deserialize() {
     ];
 
     for bad in bad_cursors {
-        let err = serde_json::from_value::<ListTablesRequest>(json!({ "cursor": bad }))
+        let err = serde_json::from_value::<ObjectsRequest>(json!({ "cursor": bad }))
             .expect_err(&format!("cursor {bad:?} should be rejected at deserialize time"));
         assert!(
             err.to_string().to_lowercase().contains("cursor")
@@ -897,12 +793,12 @@ async fn collect_all_paged_read_query(handler: &SqliteHandler, query: &str) -> V
     let mut all = Vec::new();
     let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
-        let request = ReadQueryRequest {
+        let request = ReadRequest {
             query: query.into(),
             cursor,
             timeout: None,
         };
-        let response = handler.read_query(request).await.expect("read_query page");
+        let response = handler.read(request).await.expect("read_query page");
         all.extend(response.rows);
         match response.next_cursor {
             Some(c) => cursor = Some(c),
@@ -921,7 +817,7 @@ async fn test_read_query_pagination_traverses_pages() {
     let collected = collect_all_paged_read_query(&handler_paged, query).await;
 
     let single = handler_full
-        .read_query(ReadQueryRequest {
+        .read(ReadRequest {
             query: query.into(),
             cursor: None,
             timeout: None,
@@ -943,7 +839,7 @@ async fn test_read_query_pagination_traverses_pages() {
 async fn test_read_query_pagination_small_result_no_next_cursor() {
     let handler = handler_with_page_size(2);
     let response = handler
-        .read_query(ReadQueryRequest {
+        .read(ReadRequest {
             query: "SELECT id FROM users WHERE id = 1".into(),
             cursor: None,
             timeout: None,
@@ -961,7 +857,7 @@ async fn test_read_query_pagination_small_result_no_next_cursor() {
 async fn test_read_query_pagination_empty_result_no_next_cursor() {
     let handler = handler_with_page_size(2);
     let response = handler
-        .read_query(ReadQueryRequest {
+        .read(ReadRequest {
             query: "SELECT id FROM users WHERE id = -1".into(),
             cursor: None,
             timeout: None,
@@ -977,7 +873,7 @@ async fn test_read_query_pagination_preserves_inner_limit() {
     // Caller's inner LIMIT/OFFSET stays inside the subquery wrap.
     let handler = handler_with_page_size(2);
     let response = handler
-        .read_query(ReadQueryRequest {
+        .read(ReadRequest {
             query: "SELECT id FROM users ORDER BY id LIMIT 1 OFFSET 1".into(),
             cursor: None,
             timeout: None,
@@ -999,7 +895,7 @@ async fn test_read_query_pagination_off_the_end_cursor_returns_empty() {
     use dbmcp_server::listing::Cursor;
     let handler = handler_with_page_size(2);
     let response = handler
-        .read_query(ReadQueryRequest {
+        .read(ReadRequest {
             query: "SELECT id FROM users ORDER BY id".into(),
             cursor: Some(Cursor { offset: 10_000 }),
             timeout: None,
@@ -1017,7 +913,7 @@ async fn test_read_query_pagination_survives_trailing_line_comment() {
     // the newline-before-`)` fix in dbmcp_sql::pagination::with_limit_offset.
     let handler = handler_with_page_size(2);
     let response = handler
-        .read_query(ReadQueryRequest {
+        .read(ReadRequest {
             query: "SELECT id FROM users ORDER BY id -- fetch users".into(),
             cursor: None,
             timeout: None,
@@ -1037,7 +933,7 @@ async fn test_read_query_pagination_survives_trailing_line_comment() {
 async fn test_read_query_pagination_strips_trailing_semicolon() {
     let handler = handler_with_page_size(2);
     let response = handler
-        .read_query(ReadQueryRequest {
+        .read(ReadRequest {
             query: "SELECT id FROM users WHERE id = 1;".into(),
             cursor: None,
             timeout: None,
@@ -1056,7 +952,7 @@ async fn test_read_query_pagination_invalid_cursor_rejected_at_deserialize() {
     let bad_cursors = ["!!!not-base64", "bm90LWpzb24", "eyJ4IjoxfQ", "eyJvZmZzZXQiOi0xfQ"];
 
     for bad in bad_cursors {
-        let err = serde_json::from_value::<ReadQueryRequest>(json!({
+        let err = serde_json::from_value::<ReadRequest>(json!({
             "query": "SELECT 1",
             "cursor": bad,
         }))
@@ -1074,7 +970,7 @@ async fn test_read_query_cursor_does_not_bypass_read_only() {
     use dbmcp_server::listing::Cursor;
     let handler = handler_with_page_size(2);
     let result = handler
-        .read_query(ReadQueryRequest {
+        .read(ReadRequest {
             query: "DELETE FROM users WHERE id = 1".into(),
             cursor: Some(Cursor { offset: 0 }),
             timeout: None,
@@ -1094,7 +990,7 @@ async fn test_read_query_non_select_single_page_with_cursor_ignored() {
     let handler = handler_with_page_size(2);
 
     let without_cursor = handler
-        .read_query(ReadQueryRequest {
+        .read(ReadRequest {
             query: "EXPLAIN SELECT 1".into(),
             cursor: None,
             timeout: None,
@@ -1103,7 +999,7 @@ async fn test_read_query_non_select_single_page_with_cursor_ignored() {
         .expect("EXPLAIN without cursor should succeed");
 
     let with_cursor = handler
-        .read_query(ReadQueryRequest {
+        .read(ReadRequest {
             query: "EXPLAIN SELECT 1".into(),
             cursor: Some(Cursor { offset: 100 }),
             timeout: None,
@@ -1127,7 +1023,7 @@ async fn test_read_query_temporal_columns_preserved() {
     let handler = handler(false);
 
     let response = handler
-        .read_query(ReadQueryRequest {
+        .read(ReadRequest {
             query: "SELECT date, time, timestamp FROM temporal WHERE id = 1".into(),
             cursor: None,
             timeout: None,
@@ -1149,11 +1045,14 @@ async fn test_read_query_temporal_columns_preserved() {
 async fn test_list_views_returns_seeded_views() {
     let handler = handler(true);
     let response = handler
-        .list_views(ListViewsRequest { cursor: None })
+        .objects(ObjectsRequest {
+            kind: ObjectKind::View,
+            ..Default::default()
+        })
         .await
         .expect("list_views");
 
-    let names = response.entries.as_brief().expect("brief mode");
+    let names = response.objects.as_brief().expect("brief mode");
     assert!(
         names.contains(&"active_users".to_string()),
         "expected seeded active_users view, got {names:?}"
@@ -1168,11 +1067,14 @@ async fn test_list_views_returns_seeded_views() {
 async fn test_list_views_excludes_base_tables() {
     let handler = handler(true);
     let response = handler
-        .list_views(ListViewsRequest { cursor: None })
+        .objects(ObjectsRequest {
+            kind: ObjectKind::View,
+            ..Default::default()
+        })
         .await
         .expect("list_views");
 
-    let names = response.entries.as_brief().expect("brief mode");
+    let names = response.objects.as_brief().expect("brief mode");
     for table in ["users", "posts", "tags", "post_tags", "temporal"] {
         assert!(
             !names.contains(&table.to_string()),
@@ -1190,10 +1092,14 @@ async fn test_list_views_pagination_traverses_pages() {
     let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
         let response = handler_paged
-            .list_views(ListViewsRequest { cursor })
+            .objects(ObjectsRequest {
+                kind: ObjectKind::View,
+                cursor,
+                ..Default::default()
+            })
             .await
             .expect("paged list_views");
-        all.extend(response.entries.as_brief().expect("brief").iter().cloned());
+        all.extend(response.objects.as_brief().expect("brief").iter().cloned());
         match response.next_cursor {
             Some(c) => cursor = Some(c),
             None => break,
@@ -1201,11 +1107,14 @@ async fn test_list_views_pagination_traverses_pages() {
     }
 
     let single = handler_full
-        .list_views(ListViewsRequest { cursor: None })
+        .objects(ObjectsRequest {
+            kind: ObjectKind::View,
+            ..Default::default()
+        })
         .await
         .expect("single-page list_views");
 
-    let single_names = single.entries.as_brief().expect("brief").to_vec();
+    let single_names = single.objects.as_brief().expect("brief").to_vec();
     assert_eq!(all, single_names, "paginated traversal should equal single page");
 }
 
@@ -1213,12 +1122,15 @@ async fn test_list_views_pagination_traverses_pages() {
 async fn test_list_views_works_in_read_only_mode() {
     let handler = handler(true);
     let response = handler
-        .list_views(ListViewsRequest { cursor: None })
+        .objects(ObjectsRequest {
+            kind: ObjectKind::View,
+            ..Default::default()
+        })
         .await
         .expect("list_views in read-only mode");
 
     assert!(
-        !response.entries.as_brief().expect("brief").is_empty(),
+        !response.objects.as_brief().expect("brief").is_empty(),
         "read-only mode must still allow listViews"
     );
 }
@@ -1227,11 +1139,14 @@ async fn test_list_views_works_in_read_only_mode() {
 async fn test_list_triggers_returns_seeded_triggers() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(ListTriggersRequest::default())
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
+            ..Default::default()
+        })
         .await
         .expect("list_triggers");
 
-    let names = response.entries.as_brief().expect("brief mode");
+    let names = response.objects.as_brief().expect("brief mode");
     assert!(
         names.contains(&"users_before_insert".to_string()),
         "expected seeded users_before_insert trigger, got {names:?}"
@@ -1246,12 +1161,15 @@ async fn test_list_triggers_returns_seeded_triggers() {
 async fn test_list_triggers_works_in_read_only_mode() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(ListTriggersRequest::default())
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
+            ..Default::default()
+        })
         .await
         .expect("list_triggers in read-only mode");
 
     assert!(
-        !response.entries.is_empty(),
+        !response.objects.is_empty(),
         "read-only mode must still allow listTriggers"
     );
 }
@@ -1260,13 +1178,13 @@ async fn test_list_triggers_works_in_read_only_mode() {
 async fn test_list_tables_search_filter_returns_only_matches() {
     let handler = handler(true);
     let response = handler
-        .list_tables(ListTablesRequest {
+        .objects(ObjectsRequest {
             search: Some("post".into()),
             ..Default::default()
         })
         .await
         .expect("brief + search");
-    let names = response.entries.as_brief().expect("brief").to_vec();
+    let names = response.objects.as_brief().expect("brief").to_vec();
     assert_eq!(
         names,
         vec!["post_tags", "posts", "posts_fts"],
@@ -1278,13 +1196,13 @@ async fn test_list_tables_search_filter_returns_only_matches() {
 async fn test_list_tables_search_is_case_insensitive() {
     let handler = handler(true);
     let response = handler
-        .list_tables(ListTablesRequest {
+        .objects(ObjectsRequest {
             search: Some("PoSt".into()),
             ..Default::default()
         })
         .await
         .expect("brief + search");
-    let names = response.entries.as_brief().expect("brief").to_vec();
+    let names = response.objects.as_brief().expect("brief").to_vec();
     assert_eq!(
         names,
         vec!["post_tags", "posts", "posts_fts"],
@@ -1296,13 +1214,13 @@ async fn test_list_tables_search_is_case_insensitive() {
 async fn test_list_tables_search_no_match_returns_empty() {
     let handler = handler(true);
     let response = handler
-        .list_tables(ListTablesRequest {
+        .objects(ObjectsRequest {
             search: Some("zzznosuch".into()),
             ..Default::default()
         })
         .await
         .expect("brief + search");
-    assert!(response.entries.as_brief().expect("brief").is_empty());
+    assert!(response.objects.as_brief().expect("brief").is_empty());
     assert!(response.next_cursor.is_none());
 }
 
@@ -1311,13 +1229,13 @@ async fn test_list_tables_search_supports_like_wildcards() {
     let handler = handler(true);
     // `p_sts` matches `posts` (single-char `_`) but NOT `post_tags` (would need `p____tags`).
     let response = handler
-        .list_tables(ListTablesRequest {
+        .objects(ObjectsRequest {
             search: Some("p_sts".into()),
             ..Default::default()
         })
         .await
         .expect("brief + search");
-    let names = response.entries.as_brief().expect("brief").to_vec();
+    let names = response.objects.as_brief().expect("brief").to_vec();
     assert!(
         names.iter().any(|n| n == "posts"),
         "'_' wildcard should match 'posts': {names:?}"
@@ -1332,19 +1250,16 @@ async fn test_list_tables_search_supports_like_wildcards() {
 async fn test_list_tables_search_empty_is_same_as_no_filter() {
     let handler = handler(true);
     let whitespace = handler
-        .list_tables(ListTablesRequest {
+        .objects(ObjectsRequest {
             search: Some("   ".into()),
             ..Default::default()
         })
         .await
         .expect("whitespace search");
-    let unfiltered = handler
-        .list_tables(ListTablesRequest::default())
-        .await
-        .expect("no search");
+    let unfiltered = handler.objects(ObjectsRequest::default()).await.expect("no search");
     assert_eq!(
-        whitespace.entries.as_brief().expect("brief"),
-        unfiltered.entries.as_brief().expect("brief"),
+        whitespace.objects.as_brief().expect("brief"),
+        unfiltered.objects.as_brief().expect("brief"),
         "whitespace-only search must be equivalent to no filter"
     );
 }
@@ -1354,21 +1269,21 @@ async fn test_list_tables_search_sql_meta_payloads_are_safe() {
     let handler = handler(true);
     // SQL-injection-flavoured payload via bind parameter — must not error, must not drop users.
     let response = handler
-        .list_tables(ListTablesRequest {
+        .objects(ObjectsRequest {
             search: Some("'; DROP TABLE users; --".into()),
             ..Default::default()
         })
         .await
         .expect("bound payload must not error");
-    assert!(response.entries.as_brief().expect("brief").is_empty());
+    assert!(response.objects.as_brief().expect("brief").is_empty());
 
     let follow_up = handler
-        .list_tables(ListTablesRequest::default())
+        .objects(ObjectsRequest::default())
         .await
         .expect("users still present");
     assert!(
         follow_up
-            .entries
+            .objects
             .as_brief()
             .expect("brief")
             .iter()
@@ -1384,14 +1299,14 @@ async fn test_list_tables_search_paginates_filtered_results() {
     let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
         let response = handler
-            .list_tables(ListTablesRequest {
+            .objects(ObjectsRequest {
                 cursor,
                 search: Some("post".into()),
                 ..Default::default()
             })
             .await
             .expect("paged brief + search");
-        collected.extend(response.entries.as_brief().expect("brief").to_vec());
+        collected.extend(response.objects.as_brief().expect("brief").to_vec());
         match response.next_cursor {
             Some(c) => cursor = Some(c),
             None => break,
@@ -1404,23 +1319,23 @@ async fn test_list_tables_search_paginates_filtered_results() {
     );
 }
 
-async fn detailed_entries(handler: &SqliteHandler, search: &str) -> indexmap::IndexMap<String, Value> {
+async fn detailed_objects(handler: &SqliteHandler, search: &str) -> indexmap::IndexMap<String, Value> {
     let response = handler
-        .list_tables(ListTablesRequest {
+        .objects(ObjectsRequest {
             search: Some(search.into()),
-            detailed: true,
+            detail: Detail::Full,
             ..Default::default()
         })
         .await
         .expect("detailed + search");
-    response.entries.as_detailed().expect("detailed mode").clone()
+    response.objects.as_detailed().expect("detailed mode").clone()
 }
 
 #[tokio::test]
 async fn test_list_tables_detailed_returns_full_metadata_for_posts() {
     let handler = handler(true);
-    let entries = detailed_entries(&handler, "posts").await;
-    let posts = entries.get("posts").expect("posts entry present");
+    let objects = detailed_objects(&handler, "posts").await;
+    let posts = objects.get("posts").expect("posts entry present");
 
     assert_eq!(posts["kind"], "TABLE");
     assert_eq!(posts["schema"], "main");
@@ -1486,8 +1401,8 @@ async fn test_list_tables_detailed_returns_full_metadata_for_posts() {
 #[tokio::test]
 async fn test_list_tables_detailed_distinguishes_virtual_tables() {
     let handler = handler(true);
-    let entries = detailed_entries(&handler, "fts").await;
-    let fts = entries.get("posts_fts").expect("posts_fts entry present");
+    let objects = detailed_objects(&handler, "fts").await;
+    let fts = objects.get("posts_fts").expect("posts_fts entry present");
     assert_eq!(
         fts["kind"], "VIRTUAL_TABLE",
         "FTS5 virtual table must be tagged VIRTUAL_TABLE"
@@ -1502,8 +1417,8 @@ async fn test_list_tables_detailed_distinguishes_virtual_tables() {
 #[tokio::test]
 async fn test_list_tables_detailed_handles_without_rowid_table() {
     let handler = handler(true);
-    let entries = detailed_entries(&handler, "lookup_codes").await;
-    let lookup = entries.get("lookup_codes").expect("lookup_codes entry present");
+    let objects = detailed_objects(&handler, "lookup_codes").await;
+    let lookup = objects.get("lookup_codes").expect("lookup_codes entry present");
     let columns = lookup["columns"].as_array().expect("columns array");
     let first = columns.first().expect("at least one column");
     assert_eq!(first["name"], "code");
@@ -1523,8 +1438,8 @@ async fn test_list_tables_detailed_synthesises_autoindex_definition() {
     // KEY tables reuse the rowid and get no autoindex). This is the right fixture
     // for exercising R4 synthesis.
     let handler = handler(true);
-    let entries = detailed_entries(&handler, "post_tags").await;
-    let table = entries.get("post_tags").expect("post_tags entry present");
+    let objects = detailed_objects(&handler, "post_tags").await;
+    let table = objects.get("post_tags").expect("post_tags entry present");
     let indexes = table["indexes"].as_array().expect("indexes array");
     let autoindex = indexes
         .iter()
@@ -1552,8 +1467,8 @@ async fn test_list_tables_detailed_synthesises_autoindex_definition() {
 #[tokio::test]
 async fn test_list_tables_detailed_reports_trigger() {
     let handler = handler(true);
-    let entries = detailed_entries(&handler, "posts").await;
-    let posts = entries.get("posts").expect("posts entry present");
+    let objects = detailed_objects(&handler, "posts").await;
+    let posts = objects.get("posts").expect("posts entry present");
     let triggers = posts["triggers"].as_array().expect("triggers array");
     let trigger = triggers
         .iter()
@@ -1577,14 +1492,15 @@ async fn test_list_tables_detailed_paginates() {
     let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
         let response = handler
-            .list_tables(ListTablesRequest {
+            .objects(ObjectsRequest {
                 cursor,
                 search: Some("post".into()),
-                detailed: true,
+                detail: Detail::Full,
+                ..Default::default()
             })
             .await
             .expect("paged detailed");
-        let page = response.entries.as_detailed().expect("detailed");
+        let page = response.objects.as_detailed().expect("detailed");
         assert!(page.len() <= 1, "page_size=1 caps to 1 per page");
         collected.extend(page.keys().cloned());
         match response.next_cursor {
@@ -1602,8 +1518,8 @@ async fn test_list_tables_detailed_paginates() {
 #[tokio::test]
 async fn test_list_tables_detailed_with_search_only_fetches_filtered_subset() {
     let handler = handler(true);
-    let entries = detailed_entries(&handler, "post").await;
-    let names: Vec<_> = entries.keys().cloned().collect();
+    let objects = detailed_objects(&handler, "post").await;
+    let names: Vec<_> = objects.keys().cloned().collect();
     assert_eq!(
         names,
         vec!["post_tags", "posts", "posts_fts"],
@@ -1614,9 +1530,9 @@ async fn test_list_tables_detailed_with_search_only_fetches_filtered_subset() {
 #[tokio::test]
 async fn test_list_tables_detailed_values_have_no_redundant_name_field() {
     let handler = handler(true);
-    let entries = detailed_entries(&handler, "post").await;
-    assert!(!entries.is_empty(), "fixture must yield at least one match for 'post'");
-    for (key, value) in &entries {
+    let objects = detailed_objects(&handler, "post").await;
+    assert!(!objects.is_empty(), "fixture must yield at least one match for 'post'");
+    for (key, value) in &objects {
         assert!(value.is_object(), "value for {key} must be a JSON object: {value}");
         assert!(
             value.get("name").is_none(),
@@ -1629,15 +1545,14 @@ async fn test_list_tables_detailed_values_have_no_redundant_name_field() {
 async fn test_list_tables_detailed_key_order_matches_brief_order() {
     let handler = handler(true);
     let brief = handler
-        .list_tables(ListTablesRequest {
+        .objects(ObjectsRequest {
             search: Some("post".into()),
-            detailed: false,
             ..Default::default()
         })
         .await
         .expect("brief + search");
-    let detailed = detailed_entries(&handler, "post").await;
-    let brief_names: Vec<String> = brief.entries.as_brief().expect("brief mode").to_vec();
+    let detailed = detailed_objects(&handler, "post").await;
+    let brief_names: Vec<String> = brief.objects.as_brief().expect("brief mode").to_vec();
     let detailed_keys: Vec<String> = detailed.keys().cloned().collect();
     assert_eq!(
         brief_names, detailed_keys,
@@ -1660,13 +1575,14 @@ const AUDIT_TRIGGERS: &[&str] = &[
 async fn test_list_triggers_search_filter_returns_only_matches() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(ListTriggersRequest {
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
             search: Some("audit".into()),
             ..Default::default()
         })
         .await
         .expect("brief + search");
-    let names = response.entries.as_brief().expect("brief mode").to_vec();
+    let names = response.objects.as_brief().expect("brief mode").to_vec();
     let expected: Vec<String> = AUDIT_TRIGGERS.iter().map(|s| (*s).to_string()).collect();
     assert_eq!(
         names, expected,
@@ -1678,22 +1594,24 @@ async fn test_list_triggers_search_filter_returns_only_matches() {
 async fn test_list_triggers_search_is_case_insensitive() {
     let handler = handler(true);
     let lower = handler
-        .list_triggers(ListTriggersRequest {
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
             search: Some("audit".into()),
             ..Default::default()
         })
         .await
         .expect("lower");
     let upper = handler
-        .list_triggers(ListTriggersRequest {
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
             search: Some("AUDIT".into()),
             ..Default::default()
         })
         .await
         .expect("upper");
     assert_eq!(
-        lower.entries.as_brief().expect("brief"),
-        upper.entries.as_brief().expect("brief"),
+        lower.objects.as_brief().expect("brief"),
+        upper.objects.as_brief().expect("brief"),
         "case-insensitive (SQLite `LIKE` is ASCII-case-insensitive by default)"
     );
 }
@@ -1702,13 +1620,14 @@ async fn test_list_triggers_search_is_case_insensitive() {
 async fn test_list_triggers_search_no_match_returns_empty() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(ListTriggersRequest {
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
             search: Some("nonexistent_xyz".into()),
             ..Default::default()
         })
         .await
         .expect("brief + search");
-    assert!(response.entries.as_brief().expect("brief").is_empty());
+    assert!(response.objects.as_brief().expect("brief").is_empty());
     assert!(response.next_cursor.is_none());
 }
 
@@ -1717,22 +1636,24 @@ async fn test_list_triggers_search_supports_wildcard_semantics() {
     let handler = handler(true);
     // `%audit%` is `LIKE`-equivalent to plain `audit` substring — both must yield identical sets.
     let bare = handler
-        .list_triggers(ListTriggersRequest {
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
             search: Some("audit".into()),
             ..Default::default()
         })
         .await
         .expect("bare");
     let wildcards = handler
-        .list_triggers(ListTriggersRequest {
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
             search: Some("%audit%".into()),
             ..Default::default()
         })
         .await
         .expect("wildcards");
     assert_eq!(
-        bare.entries.as_brief().expect("brief"),
-        wildcards.entries.as_brief().expect("brief"),
+        bare.objects.as_brief().expect("brief"),
+        wildcards.objects.as_brief().expect("brief"),
         "%/_ retain LIKE wildcard semantics consistent with listTables"
     );
 }
@@ -1742,23 +1663,24 @@ async fn test_list_triggers_search_sql_meta_payloads_are_safe() {
     let handler = handler(true);
     for payload in ["'", ";", "--", "\"", "/* */", "'; DROP TABLE users; --"] {
         let response = handler
-            .list_triggers(ListTriggersRequest {
+            .objects(ObjectsRequest {
+                kind: ObjectKind::Trigger,
                 search: Some(payload.into()),
                 ..Default::default()
             })
             .await
             .unwrap_or_else(|e| panic!("payload {payload:?} must not error: {e:?}"));
         // Bound payload — no SQL parse error, possibly empty result.
-        let _ = response.entries.as_brief().expect("brief").to_vec();
+        let _ = response.objects.as_brief().expect("brief").to_vec();
     }
     // Users table must survive every adversarial payload.
     let follow_up = handler
-        .list_tables(ListTablesRequest::default())
+        .objects(ObjectsRequest::default())
         .await
         .expect("users table check");
     assert!(
         follow_up
-            .entries
+            .objects
             .as_brief()
             .expect("brief")
             .iter()
@@ -1774,14 +1696,15 @@ async fn test_list_triggers_search_paginates_filtered_results() {
     let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
         let response = handler
-            .list_triggers(ListTriggersRequest {
+            .objects(ObjectsRequest {
+                kind: ObjectKind::Trigger,
                 cursor,
                 search: Some("audit".into()),
                 ..Default::default()
             })
             .await
             .expect("paged brief + search");
-        let page = response.entries.as_brief().expect("brief").to_vec();
+        let page = response.objects.as_brief().expect("brief").to_vec();
         assert!(page.len() <= 2, "page exceeds page_size=2: {page:?}");
         collected.extend(page);
         match response.next_cursor {
@@ -1796,24 +1719,25 @@ async fn test_list_triggers_search_paginates_filtered_results() {
     );
 }
 
-async fn detailed_trigger_entries(handler: &SqliteHandler, search: &str) -> indexmap::IndexMap<String, Value> {
+async fn detailed_trigger_objects(handler: &SqliteHandler, search: &str) -> indexmap::IndexMap<String, Value> {
     let response = handler
-        .list_triggers(ListTriggersRequest {
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
             search: Some(search.into()),
-            detailed: true,
+            detail: Detail::Full,
             ..Default::default()
         })
         .await
         .expect("detailed + search");
-    response.entries.as_detailed().expect("detailed mode").clone()
+    response.objects.as_detailed().expect("detailed mode").clone()
 }
 
 #[tokio::test]
 async fn test_list_triggers_detailed_returns_keyed_object_with_three_fields() {
     let handler = handler(true);
-    let entries = detailed_trigger_entries(&handler, "users_audit_after_insert").await;
-    assert_eq!(entries.len(), 1, "exactly one match for the exact name");
-    let entry = entries
+    let objects = detailed_trigger_objects(&handler, "users_audit_after_insert").await;
+    assert_eq!(objects.len(), 1, "exactly one match for the exact name");
+    let entry = objects
         .get("users_audit_after_insert")
         .expect("entry keyed by trigger name");
     let obj = entry.as_object().expect("entry is an object");
@@ -1835,9 +1759,9 @@ async fn test_list_triggers_detailed_returns_keyed_object_with_three_fields() {
 #[tokio::test]
 async fn test_list_triggers_detailed_omits_unrelated_keys() {
     let handler = handler(true);
-    let entries = detailed_trigger_entries(&handler, "audit").await;
-    assert!(!entries.is_empty(), "audit search must match");
-    for (name, entry) in &entries {
+    let objects = detailed_trigger_objects(&handler, "audit").await;
+    assert!(!objects.is_empty(), "audit search must match");
+    for (name, entry) in &objects {
         let obj = entry.as_object().expect("entry object");
         for forbidden in [
             "timing",
@@ -1863,8 +1787,8 @@ async fn test_list_triggers_detailed_omits_unrelated_keys() {
 #[tokio::test]
 async fn test_list_triggers_detailed_instead_of_view_carries_view_name_in_table() {
     let handler = handler(true);
-    let entries = detailed_trigger_entries(&handler, "published_posts_instead_of_delete").await;
-    let entry = entries
+    let objects = detailed_trigger_objects(&handler, "published_posts_instead_of_delete").await;
+    let entry = objects
         .get("published_posts_instead_of_delete")
         .expect("INSTEAD OF trigger entry");
     assert_eq!(
@@ -1881,8 +1805,8 @@ async fn test_list_triggers_detailed_instead_of_view_carries_view_name_in_table(
 #[tokio::test]
 async fn test_list_triggers_detailed_definition_round_trips_multiline_body() {
     let handler = handler(true);
-    let entries = detailed_trigger_entries(&handler, "users_audit_after_insert").await;
-    let entry = entries
+    let objects = detailed_trigger_objects(&handler, "users_audit_after_insert").await;
+    let entry = objects
         .get("users_audit_after_insert")
         .expect("multi-statement trigger entry");
     let definition = entry["definition"].as_str().expect("definition string");
@@ -1896,10 +1820,13 @@ async fn test_list_triggers_detailed_definition_round_trips_multiline_body() {
 async fn test_list_triggers_brief_mode_wire_shape_unchanged() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(ListTriggersRequest::default())
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
+            ..Default::default()
+        })
         .await
         .expect("brief default");
-    let names = response.entries.as_brief().expect("brief mode");
+    let names = response.objects.as_brief().expect("brief mode");
     assert!(
         names.iter().all(|n| !n.is_empty()),
         "brief response is a flat array of bare strings: {names:?}"
@@ -1912,19 +1839,19 @@ async fn test_list_triggers_brief_mode_wire_shape_unchanged() {
 #[tokio::test]
 async fn test_list_triggers_detailed_search_narrows_payload() {
     let handler = handler(true);
-    let entries = detailed_trigger_entries(&handler, "audit").await;
-    for name in entries.keys() {
+    let objects = detailed_trigger_objects(&handler, "audit").await;
+    for name in objects.keys() {
         assert!(
             name.contains("audit"),
             "search 'audit' + detailed must not surface unrelated triggers: got {name:?}"
         );
     }
     assert!(
-        !entries.contains_key("users_before_insert"),
+        !objects.contains_key("users_before_insert"),
         "non-audit triggers must not appear in detailed audit-filtered response"
     );
     assert!(
-        !entries.contains_key("posts_before_update"),
+        !objects.contains_key("posts_before_update"),
         "non-audit triggers must not appear in detailed audit-filtered response"
     );
 }
@@ -1936,14 +1863,15 @@ async fn test_list_triggers_detailed_paginates() {
     let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
         let response = handler
-            .list_triggers(ListTriggersRequest {
+            .objects(ObjectsRequest {
+                kind: ObjectKind::Trigger,
                 cursor,
                 search: Some("audit".into()),
-                detailed: true,
+                detail: Detail::Full,
             })
             .await
             .expect("paged detailed + search");
-        let page = response.entries.as_detailed().expect("detailed mode");
+        let page = response.objects.as_detailed().expect("detailed mode");
         assert!(page.len() <= 2, "page exceeds page_size=2: {page:?}");
         collected.extend(page.keys().cloned());
         match response.next_cursor {
@@ -1965,13 +1893,13 @@ async fn test_list_triggers_detailed_omits_null_sql_rows_brief_lists_them() {
     // Seed a synthetic NULL-sql trigger row using PRAGMA writable_schema.
     // Scoped to this test only; reset PRAGMA back to OFF immediately.
     handler
-        .write_query(QueryRequest {
+        .write(WriteRequest {
             query: "PRAGMA writable_schema = ON".into(),
         })
         .await
         .expect("writable_schema on");
     handler
-        .write_query(QueryRequest {
+        .write(WriteRequest {
             query: "INSERT INTO sqlite_schema (type, name, tbl_name, rootpage, sql) \
                     VALUES ('trigger', 'orphan_trigger', 'users', 0, NULL)"
                 .into(),
@@ -1979,20 +1907,21 @@ async fn test_list_triggers_detailed_omits_null_sql_rows_brief_lists_them() {
         .await
         .expect("synthetic NULL-sql row");
     handler
-        .write_query(QueryRequest {
+        .write(WriteRequest {
             query: "PRAGMA writable_schema = OFF".into(),
         })
         .await
         .expect("writable_schema off");
 
     let brief = handler
-        .list_triggers(ListTriggersRequest {
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
             search: Some("orphan".into()),
             ..Default::default()
         })
         .await
         .expect("brief search");
-    let names = brief.entries.as_brief().expect("brief").to_vec();
+    let names = brief.objects.as_brief().expect("brief").to_vec();
     assert_eq!(
         names,
         vec!["orphan_trigger"],
@@ -2000,14 +1929,15 @@ async fn test_list_triggers_detailed_omits_null_sql_rows_brief_lists_them() {
     );
 
     let detailed = handler
-        .list_triggers(ListTriggersRequest {
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Trigger,
             search: Some("orphan".into()),
-            detailed: true,
+            detail: Detail::Full,
             ..Default::default()
         })
         .await
         .expect("detailed search");
-    let keyed = detailed.entries.as_detailed().expect("detailed");
+    let keyed = detailed.objects.as_detailed().expect("detailed");
     assert!(
         keyed.is_empty(),
         "detailed mode silently omits NULL-sql triggers (FR-018 / Clarification Q2): {keyed:?}"
@@ -2015,19 +1945,19 @@ async fn test_list_triggers_detailed_omits_null_sql_rows_brief_lists_them() {
 
     // Cleanup.
     handler
-        .write_query(QueryRequest {
+        .write(WriteRequest {
             query: "PRAGMA writable_schema = ON".into(),
         })
         .await
         .expect("writable_schema on");
     handler
-        .write_query(QueryRequest {
+        .write(WriteRequest {
             query: "DELETE FROM sqlite_schema WHERE name = 'orphan_trigger'".into(),
         })
         .await
         .expect("cleanup synthetic row");
     handler
-        .write_query(QueryRequest {
+        .write(WriteRequest {
             query: "PRAGMA writable_schema = OFF".into(),
         })
         .await
@@ -2069,12 +1999,12 @@ fn handler_with_operator(operator: privacy::Operator) -> SqliteHandler {
 #[tokio::test]
 async fn read_query_redacts_email_when_enabled() {
     let handler = handler_with_redaction(true);
-    let select = ReadQueryRequest {
+    let select = ReadRequest {
         query: "SELECT 'ping me at jane.doe@example.com' AS msg".into(),
         cursor: None,
         timeout: None,
     };
-    let rows = handler.read_query(select).await.unwrap();
+    let rows = handler.read(select).await.unwrap();
     assert_eq!(rows.rows.len(), 1);
     assert_eq!(rows.rows[0]["msg"], "ping me at <EMAIL_ADDRESS>");
 }
@@ -2082,24 +2012,24 @@ async fn read_query_redacts_email_when_enabled() {
 #[tokio::test]
 async fn read_query_unchanged_when_disabled() {
     let handler = handler_with_redaction(false);
-    let select = ReadQueryRequest {
+    let select = ReadRequest {
         query: "SELECT 'ping me at jane.doe@example.com' AS msg".into(),
         cursor: None,
         timeout: None,
     };
-    let rows = handler.read_query(select).await.unwrap();
+    let rows = handler.read(select).await.unwrap();
     assert_eq!(rows.rows[0]["msg"], "ping me at jane.doe@example.com");
 }
 
 #[tokio::test]
 async fn read_query_does_not_redact_non_string_values() {
     let handler = handler_with_redaction(true);
-    let select = ReadQueryRequest {
+    let select = ReadRequest {
         query: "SELECT 42 AS n, 1 AS flag, NULL AS missing".into(),
         cursor: None,
         timeout: None,
     };
-    let rows = handler.read_query(select).await.unwrap();
+    let rows = handler.read(select).await.unwrap();
     assert_eq!(rows.rows[0]["n"], 42);
     assert_eq!(rows.rows[0]["flag"], 1);
     assert!(rows.rows[0]["missing"].is_null());
@@ -2108,12 +2038,12 @@ async fn read_query_does_not_redact_non_string_values() {
 #[tokio::test]
 async fn read_query_does_not_redact_column_names() {
     let handler = handler_with_redaction(true);
-    let select = ReadQueryRequest {
+    let select = ReadRequest {
         query: "SELECT 1 AS \"user@example.com\"".into(),
         cursor: None,
         timeout: None,
     };
-    let rows = handler.read_query(select).await.unwrap();
+    let rows = handler.read(select).await.unwrap();
     let obj = rows.rows[0].as_object().expect("row object");
     assert!(
         obj.contains_key("user@example.com"),
@@ -2124,32 +2054,32 @@ async fn read_query_does_not_redact_column_names() {
 #[tokio::test]
 async fn write_query_redacts_when_enabled() {
     let handler = handler_with_redaction(true);
-    let insert = QueryRequest {
+    let insert = WriteRequest {
         query: "INSERT INTO users (name, email) VALUES ('PIIWrite', 'piiwrite@example.com')".into(),
     };
-    handler.write_query(insert).await.unwrap();
+    handler.write(insert).await.unwrap();
 
-    let select = ReadQueryRequest {
+    let select = ReadRequest {
         query: "SELECT email FROM users WHERE name = 'PIIWrite'".into(),
         cursor: None,
         timeout: None,
     };
-    let rows = handler.read_query(select).await.unwrap();
+    let rows = handler.read(select).await.unwrap();
     assert_eq!(rows.rows[0]["email"], "<EMAIL_ADDRESS>");
 
-    let cleanup = QueryRequest {
+    let cleanup = WriteRequest {
         query: "DELETE FROM users WHERE name = 'PIIWrite'".into(),
     };
-    handler_with_redaction(false).write_query(cleanup).await.unwrap();
+    handler_with_redaction(false).write(cleanup).await.unwrap();
 }
 
 #[tokio::test]
 async fn explain_query_redacts_when_enabled() {
     let handler = handler_with_redaction(true);
-    let explain = ExplainQueryRequest {
+    let explain = ExplainRequest {
         query: "SELECT 'ping me at jane.doe@example.com'".into(),
     };
-    let rows = handler.explain_query(explain).await.unwrap();
+    let rows = handler.explain(explain).await.unwrap();
     // SQLite EXPLAIN QUERY PLAN may not embed the literal — assert it is at
     // least not leaked when the analyzer would have caught it.
     let serialized = serde_json::to_string(&rows.rows).unwrap();
@@ -2162,12 +2092,12 @@ async fn explain_query_redacts_when_enabled() {
 #[tokio::test]
 async fn read_query_mask_operator_replaces_with_asterisks() {
     let handler = handler_with_operator(privacy::Operator::Mask);
-    let select = ReadQueryRequest {
+    let select = ReadRequest {
         query: "SELECT 'jane.doe@example.com' AS msg".into(),
         cursor: None,
         timeout: None,
     };
-    let rows = handler.read_query(select).await.unwrap();
+    let rows = handler.read(select).await.unwrap();
     let out = rows.rows[0]["msg"].as_str().unwrap();
     assert_eq!(out.len(), "jane.doe@example.com".len(), "mask preserves length");
     assert!(out.chars().all(|c| c == '*'), "mask must use '*': {out}");
@@ -2176,24 +2106,24 @@ async fn read_query_mask_operator_replaces_with_asterisks() {
 #[tokio::test]
 async fn read_query_redact_operator_returns_empty_span() {
     let handler = handler_with_operator(privacy::Operator::Redact);
-    let select = ReadQueryRequest {
+    let select = ReadRequest {
         query: "SELECT 'jane.doe@example.com' AS msg".into(),
         cursor: None,
         timeout: None,
     };
-    let rows = handler.read_query(select).await.unwrap();
+    let rows = handler.read(select).await.unwrap();
     assert_eq!(rows.rows[0]["msg"], "");
 }
 
 #[tokio::test]
 async fn read_query_hash_operator_emits_keyed_token() {
     let handler = handler_with_operator(privacy::Operator::Hash);
-    let select = ReadQueryRequest {
+    let select = ReadRequest {
         query: "SELECT 'jane.doe@example.com' AS a, 'jane.doe@example.com' AS b".into(),
         cursor: None,
         timeout: None,
     };
-    let rows = handler.read_query(select).await.unwrap();
+    let rows = handler.read(select).await.unwrap();
     let a = rows.rows[0]["a"].as_str().unwrap();
     let b = rows.rows[0]["b"].as_str().unwrap();
     assert_eq!(a, "<EMAIL_ADDRESS_4e1f0dd69c51e84c>");
@@ -2205,12 +2135,12 @@ async fn hash_operator_error_token_matches_row_token() {
     use dbmcp_server::ToolHandler;
 
     let handler = handler_with_operator(privacy::Operator::Hash);
-    let select = ReadQueryRequest {
+    let select = ReadRequest {
         query: "SELECT * FROM \"jane.doe@example.com\"".into(),
         cursor: None,
         timeout: None,
     };
-    let error = handler.read_query(select).await.expect_err("table does not exist");
+    let error = handler.read(select).await.expect_err("table does not exist");
     let message = handler.redact_error(&error.message);
     assert!(!message.contains("jane.doe@example.com"), "email leaked: {message}");
     assert!(message.contains("<EMAIL_ADDRESS_4e1f0dd69c51e84c>"), "got: {message}");
@@ -2479,7 +2409,7 @@ async fn test_write_query_reports_rows_affected_and_insert_id() {
     let handler = handler(false);
 
     let insert = handler
-        .write_query(QueryRequest {
+        .write(WriteRequest {
             query: "INSERT INTO users (name, email) VALUES ('Counter', 'counter1@test.com')".into(),
         })
         .await
@@ -2487,7 +2417,7 @@ async fn test_write_query_reports_rows_affected_and_insert_id() {
     assert!(insert.rows.is_empty());
     assert_eq!(insert.rows_affected, 1);
     let id = handler
-        .read_query(ReadQueryRequest {
+        .read(ReadRequest {
             query: "SELECT id FROM users WHERE email = 'counter1@test.com'".into(),
             cursor: None,
             timeout: None,
@@ -2501,7 +2431,7 @@ async fn test_write_query_reports_rows_affected_and_insert_id() {
     // SQLite keeps the change count and rowid per connection; they must not leak
     // into later statements that set neither.
     let create = handler
-        .write_query(QueryRequest {
+        .write(WriteRequest {
             query: "CREATE TABLE counter_ddl (id INTEGER PRIMARY KEY)".into(),
         })
         .await
@@ -2509,14 +2439,14 @@ async fn test_write_query_reports_rows_affected_and_insert_id() {
     assert_eq!(create.rows_affected, 0);
     assert_eq!(create.last_insert_id, None);
     handler
-        .write_query(QueryRequest {
+        .write(WriteRequest {
             query: "DROP TABLE counter_ddl".into(),
         })
         .await
         .unwrap();
 
     let update = handler
-        .write_query(QueryRequest {
+        .write(WriteRequest {
             query: "UPDATE users SET name = 'Counted' WHERE email = 'counter1@test.com' RETURNING id".into(),
         })
         .await
@@ -2526,7 +2456,7 @@ async fn test_write_query_reports_rows_affected_and_insert_id() {
     assert_eq!(update.last_insert_id, None);
 
     let delete = handler
-        .write_query(QueryRequest {
+        .write(WriteRequest {
             query: "DELETE FROM users WHERE email = 'counter1@test.com'".into(),
         })
         .await
@@ -2557,7 +2487,7 @@ fn handler_with_caps(max_cell_chars: usize, max_response_chars: usize, redact_pr
 async fn read_query_cuts_long_cells_and_reports_truncation() {
     let handler = handler_with_caps(4, 0, false);
     let response = handler
-        .read_query(ReadQueryRequest {
+        .read(ReadRequest {
             query: "SELECT 'abcdefghij' AS s".into(),
             cursor: None,
             timeout: None,
@@ -2576,7 +2506,7 @@ async fn read_query_response_cap_defers_dropped_rows_to_the_next_page() {
     let query = "SELECT id FROM users ORDER BY id";
 
     let first = handler
-        .read_query(ReadQueryRequest {
+        .read(ReadRequest {
             query: query.into(),
             cursor: None,
             timeout: None,
@@ -2597,7 +2527,7 @@ async fn read_query_response_cap_counts_unpaged_rows_it_drops() {
     // A non-`SELECT` cannot resume, so dropped rows are counted instead.
     let handler = handler_with_caps(0, 12, false);
     let response = handler
-        .read_query(ReadQueryRequest {
+        .read(ReadRequest {
             query: "EXPLAIN SELECT * FROM users".into(),
             cursor: None,
             timeout: None,
@@ -2614,7 +2544,7 @@ async fn read_query_response_cap_counts_unpaged_rows_it_drops() {
 async fn write_query_response_cap_counts_returned_rows_it_drops() {
     let handler = handler_with_caps(0, 12, false);
     let response = handler
-        .write_query(QueryRequest {
+        .write(WriteRequest {
             query: "UPDATE users SET name = name WHERE id IN (1, 2, 3) RETURNING id".into(),
         })
         .await
@@ -2629,7 +2559,7 @@ async fn write_query_response_cap_counts_returned_rows_it_drops() {
 async fn read_query_redacts_before_cutting() {
     let handler = handler_with_caps(14, 0, true);
     let response = handler
-        .read_query(ReadQueryRequest {
+        .read(ReadRequest {
             query: "SELECT 'contact jane.doe@example.com now' AS msg".into(),
             cursor: None,
             timeout: None,
@@ -2644,7 +2574,7 @@ async fn read_query_redacts_before_cutting() {
 async fn read_query_default_caps_leave_small_results_unchanged() {
     let handler = handler(true);
     let response = handler
-        .read_query(ReadQueryRequest {
+        .read(ReadRequest {
             query: "SELECT 'abc' AS s".into(),
             cursor: None,
             timeout: None,
@@ -2707,7 +2637,7 @@ const LATE_ERROR: &str = "WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n + 
 async fn test_read_query_pagination_late_error_fails_skipped_page() {
     let handler = handler_with_page_size(2);
     let result = handler
-        .read_query(ReadQueryRequest {
+        .read(ReadRequest {
             query: format!("{LATE_ERROR} LIMIT (SELECT 100)"),
             cursor: None,
             timeout: None,
@@ -2720,7 +2650,7 @@ async fn test_read_query_pagination_late_error_fails_skipped_page() {
 async fn test_read_query_pagination_late_error_spares_merged_first_page() {
     let handler = handler_with_page_size(2);
     let response = handler
-        .read_query(ReadQueryRequest {
+        .read(ReadRequest {
             query: format!("{LATE_ERROR} LIMIT 100"),
             cursor: None,
             timeout: None,
@@ -2801,7 +2731,7 @@ fn handler_with_rules(page_size: u16) -> SqliteHandler {
 
 async fn ruled_read(handler: &SqliteHandler, query: &str) -> Result<Vec<Value>, rmcp::model::ErrorData> {
     handler
-        .read_query(ReadQueryRequest {
+        .read(ReadRequest {
             query: query.into(),
             cursor: None,
             timeout: None,
@@ -3106,7 +3036,7 @@ async fn column_rules_deny_relations_not_yet_created() {
 async fn column_rules_explain_ruled_relations_returns_plan() {
     let handler = handler_with_rules(100);
     let response = handler
-        .explain_query(ExplainQueryRequest {
+        .explain(ExplainRequest {
             query: "SELECT email FROM users WHERE id = 1".into(),
         })
         .await
@@ -3148,7 +3078,7 @@ async fn column_rules_refuse_read_query_bytecode_explain_of_ruled_relations() {
 async fn column_rules_refuse_explaining_ruled_columns_in_conditions() {
     let handler = handler_with_rules(100);
     let error = handler
-        .explain_query(ExplainQueryRequest {
+        .explain(ExplainRequest {
             query: "SELECT id FROM users WHERE email = 'x'".into(),
         })
         .await
@@ -3161,7 +3091,7 @@ async fn column_rules_refuse_explaining_ruled_columns_in_conditions() {
 async fn column_rules_refuse_laundering_writes() {
     let handler = handler_with_rules(100);
     let error = handler
-        .write_query(QueryRequest {
+        .write(WriteRequest {
             query: "INSERT INTO audit (note) SELECT email FROM users".into(),
         })
         .await
@@ -3177,7 +3107,7 @@ async fn column_rules_refuse_laundering_writes() {
 async fn column_rules_redact_returning_rows() {
     let handler = handler_with_rules(100);
     let response = handler
-        .write_query(QueryRequest {
+        .write(WriteRequest {
             query: "UPDATE policy_hashed SET email = email WHERE id = 2 RETURNING id, email".into(),
         })
         .await
@@ -3188,7 +3118,7 @@ async fn column_rules_redact_returning_rows() {
 
 async fn ruled_write(handler: &SqliteHandler, query: &str) -> Result<u64, rmcp::model::ErrorData> {
     handler
-        .write_query(QueryRequest { query: query.into() })
+        .write(WriteRequest { query: query.into() })
         .await
         .map(|response| response.rows_affected)
 }
@@ -3383,7 +3313,7 @@ async fn column_rules_allow_same_hash_copies_nulls_and_omitted_hashed_columns() 
 async fn column_rules_keep_positions_across_pages() {
     let handler = handler_with_rules(2);
     let first = handler
-        .read_query(ReadQueryRequest {
+        .read(ReadRequest {
             query: "SELECT id, email FROM users ORDER BY id".into(),
             cursor: None,
             timeout: None,
@@ -3393,7 +3323,7 @@ async fn column_rules_keep_positions_across_pages() {
     assert_eq!(first.rows.len(), 2);
     assert!(first.rows.iter().all(|row| is_email_token(&row["email"])));
     let second = handler
-        .read_query(ReadQueryRequest {
+        .read(ReadRequest {
             query: "SELECT id, email FROM users ORDER BY id".into(),
             cursor: first.next_cursor,
             timeout: None,
@@ -3417,7 +3347,7 @@ async fn column_rules_withhold_value_echoing_errors() {
 async fn column_rules_refuse_multi_statement_writes() {
     let handler = handler_with_rules(100);
     let error = handler
-        .write_query(QueryRequest {
+        .write(WriteRequest {
             query: "UPDATE audit SET note = 'a' WHERE id = 1; UPDATE audit SET note = 'ok' WHERE id = 1".into(),
         })
         .await
@@ -3467,10 +3397,7 @@ async fn column_rules_replace_and_drop_views() {
         "CREATE VIEW IF NOT EXISTS policy_audit_view AS SELECT id, note FROM audit",
         "DROP VIEW IF EXISTS policy_audit_view",
     ] {
-        handler
-            .write_query(QueryRequest { query: query.into() })
-            .await
-            .expect(query);
+        handler.write(WriteRequest { query: query.into() }).await.expect(query);
     }
 }
 
@@ -3493,7 +3420,7 @@ async fn read_query_keys_follow_select_order() {
 #[tokio::test]
 async fn write_query_returning_keys_follow_returning_order() {
     let response = handler(false)
-        .write_query(QueryRequest {
+        .write(WriteRequest {
             query: "UPDATE users SET name = name WHERE id = 1 RETURNING name, id, email".into(),
         })
         .await

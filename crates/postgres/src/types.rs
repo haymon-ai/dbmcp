@@ -1,6 +1,6 @@
 //! PostgreSQL-specific MCP tool request types.
 //!
-//! The shared brief/detailed payload (`ListEntries`, `ListEntriesResponse`)
+//! The shared brief/detailed payload (`Objects`, `ListObjectsResponse`)
 //! and `Detail` live in the `dbmcp-server` crate; they are re-exported here so call sites can keep importing them from
 //! `crate::types`.
 
@@ -8,7 +8,7 @@ use dbmcp_server::listing::Cursor;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-pub use dbmcp_server::types::{Detail, ListEntries, ListEntriesResponse};
+pub use dbmcp_server::types::{Detail, ListObjectsResponse, Objects};
 
 /// Kind of database object the `objects` tool lists.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]

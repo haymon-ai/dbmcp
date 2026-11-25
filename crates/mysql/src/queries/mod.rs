@@ -5,7 +5,7 @@
 //! file per object kind (`databases`, `tables`, `views`, `triggers`,
 //! `functions`, `procedures`) plus `session` (connection hooks), `policy`
 //! (`privacy.rules` catalog rounds, transaction start, and the `EXPLAIN`
-//! format pin), `ident` (identifier quoting), and `explain`.
+//! format pin), and `explain`.
 //!
 //! User SQL stays outside, running through [`Connection`](dbmcp_sql::Connection)
 //! or [`enforce`](crate::MysqlHandler::enforce). [`explain::statement`]
@@ -15,7 +15,6 @@
 pub(crate) mod databases;
 pub(crate) mod explain;
 pub(crate) mod functions;
-pub(crate) mod ident;
 pub(crate) mod policy;
 pub(crate) mod procedures;
 pub(crate) mod session;

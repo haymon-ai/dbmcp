@@ -2,7 +2,7 @@
 
 use dbmcp_privacy::MaybeRedact as _;
 use dbmcp_server::truncate::{Truncation, caps};
-use dbmcp_server::types::{QueryRequest, WriteQueryResponse};
+use dbmcp_server::types::{WriteRequest, WriteResponse};
 use dbmcp_sql::validation::validate_write;
 use dbmcp_truncate::{Window, fit};
 
@@ -11,8 +11,8 @@ use dbmcp_policy::Access;
 
 const NAME: &str = "write";
 const TITLE: &str = "Write";
-const DESCRIPTION_PINNED: &str = include_str!("../../assets/tools/write_query/pinned.md");
-const DESCRIPTION_UNPINNED: &str = include_str!("../../assets/tools/write_query/unpinned.md");
+const DESCRIPTION_PINNED: &str = include_str!("../../assets/tools/write/pinned.md");
+const DESCRIPTION_UNPINNED: &str = include_str!("../../assets/tools/write/unpinned.md");
 
 fn annotations() -> ToolAnnotations {
     ToolAnnotations::new()
@@ -22,12 +22,12 @@ fn annotations() -> ToolAnnotations {
         .open_world(true)
 }
 
-/// Marker type for the `writeQuery` MCP tool.
-pub(crate) struct WriteQueryTool<const PINNED: bool>;
+/// Marker type for the `write` MCP tool.
+pub(crate) struct WriteTool<const PINNED: bool>;
 
-impl<const PINNED: bool> ToolBase for WriteQueryTool<PINNED> {
-    type Parameter = QueryRequest;
-    type Output = WriteQueryResponse;
+impl<const PINNED: bool> ToolBase for WriteTool<PINNED> {
+    type Parameter = WriteRequest;
+    type Output = WriteResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
@@ -62,9 +62,9 @@ impl<const PINNED: bool> ToolBase for WriteQueryTool<PINNED> {
     }
 }
 
-impl<const PINNED: bool> AsyncTool<MysqlHandler> for WriteQueryTool<PINNED> {
+impl<const PINNED: bool> AsyncTool<MysqlHandler> for WriteTool<PINNED> {
     async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler.write_query(params.query, params.database).await
+        handler.write(params.query, params.database).await
     }
 }
 
@@ -89,7 +89,7 @@ impl MysqlHandler {
     /// [`SqlError::ReadOnlyViolation`]: dbmcp_sql::SqlError::ReadOnlyViolation
     /// [`SqlError::UnreadableCharacter`]: dbmcp_sql::SqlError::UnreadableCharacter
     /// [`SqlError::UseBlocked`]: dbmcp_sql::SqlError::UseBlocked
-    pub async fn write_query(&self, query: String, database: Option<String>) -> Result<WriteQueryResponse, ErrorData> {
+    pub async fn write(&self, query: String, database: Option<String>) -> Result<WriteResponse, ErrorData> {
         validate_write(&query, &sqlparser::dialect::MySqlDialect {})?;
 
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
@@ -116,7 +116,7 @@ impl MysqlHandler {
         };
         let fitted = fit(rows, caps);
 
-        Ok(WriteQueryResponse {
+        Ok(WriteResponse {
             rows: fitted.items,
             rows_affected,
             last_insert_id,

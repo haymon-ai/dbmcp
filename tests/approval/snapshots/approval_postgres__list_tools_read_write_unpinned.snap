@@ -88,7 +88,7 @@ expression: tools
   {
     "name": "objects",
     "title": "Objects",
-    "description": "List database objects by kind: names, or full metadata keyed by name.\n\n<usecase>\nUse before writing SQL to discover object names and shapes. Prefer this over querying the catalog through `read`.\n</usecase>\n\n<parameters>\n- `database` — Database to target. Defaults to the active database.\n- `kind` — Object kind: `table`, `view`, `materialized_view`, `trigger`, `function`, `procedure`, `database`. Default `table`.\n- `search` — Case-insensitive filter on names via `ILIKE`. `%` matches any sequence; `_` matches a single character.\n- `detail` — `names` (default) returns bare names; `full` returns metadata keyed by name.\n- `cursor` — Opaque pagination cursor; echo the prior response's `nextCursor`.\n</parameters>\n\n<examples>\n✓ \"What tables are there?\" → objects()\n✓ \"What columns does orders have?\" → objects(search=\"orders\", detail=\"full\")\n✓ \"Which triggers exist?\" → objects(kind=\"trigger\")\n✓ \"Which databases exist?\" → objects(kind=\"database\")\n</examples>\n\n<what_it_returns>\n`detail: \"names\"`: `{\"entries\": [...]}`, a sorted array of name strings.\n`detail: \"full\"`: `{\"entries\": {name: metadata}}`; the name is the key and is not repeated. Metadata per kind:\n- `table`: `schema`, `kind`, `owner`, `comment`, `columns`, `constraints`, `indexes`, `triggers`.\n- `view`: `schema`, `owner`, `description`, `definition` (the `SELECT` body).\n- `materialized_view`: `schema`, `owner`, `description`, `definition`, `populated`, `indexed`.\n- `trigger`: `schema`, `table`, `status`, `timing`, `events`, `activationLevel`, `functionName`, `definition`; internal triggers excluded.\n- `function`: keyed by `name(arguments)` (one key per overload): `schema`, `name`, `language`, `arguments`, `returnType`, `volatility`, `strict`, `security`, `parallelSafety`, `owner`, `description`, `definition`.\n- `procedure`: keyed by `name(arguments)`: `schema`, `name`, `language`, `arguments`, `security`, `owner`, `description`, `definition`.\n- `database`: names only; `search` and `detail` are rejected.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor`; keep `kind`, `search`, and `detail` the same across pages.\n</pagination>\n",
+    "description": "List database objects by kind: names, or full metadata keyed by name.\n\n<usecase>\nUse before writing SQL to discover object names and shapes. Prefer this over querying the catalog through `read`.\n</usecase>\n\n<parameters>\n- `database` — Database to target. Defaults to the active database.\n- `kind` — Object kind: `table`, `view`, `materialized_view`, `trigger`, `function`, `procedure`, `database`. Default `table`.\n- `search` — Case-insensitive filter on names via `ILIKE`. `%` matches any sequence; `_` matches a single character.\n- `detail` — `names` (default) returns bare names; `full` returns metadata keyed by name.\n- `cursor` — Opaque pagination cursor; echo the prior response's `nextCursor`.\n</parameters>\n\n<examples>\n✓ \"What tables are there?\" → objects()\n✓ \"What columns does orders have?\" → objects(search=\"orders\", detail=\"full\")\n✓ \"Which triggers exist?\" → objects(kind=\"trigger\")\n✓ \"Which databases exist?\" → objects(kind=\"database\")\n</examples>\n\n<what_it_returns>\n`detail: \"names\"`: `{\"objects\": [...]}`, a sorted array of name strings.\n`detail: \"full\"`: `{\"objects\": {name: metadata}}`; the name is the key and is not repeated. Metadata per kind:\n- `table`: `schema`, `kind`, `owner`, `comment`, `columns`, `constraints`, `indexes`, `triggers`.\n- `view`: `schema`, `owner`, `description`, `definition` (the `SELECT` body).\n- `materialized_view`: `schema`, `owner`, `description`, `definition`, `populated`, `indexed`.\n- `trigger`: `schema`, `table`, `status`, `timing`, `events`, `activationLevel`, `functionName`, `definition`; internal triggers excluded.\n- `function`: keyed by `name(arguments)` (one key per overload): `schema`, `name`, `language`, `arguments`, `returnType`, `volatility`, `strict`, `security`, `parallelSafety`, `owner`, `description`, `definition`.\n- `procedure`: keyed by `name(arguments)`: `schema`, `name`, `language`, `arguments`, `security`, `owner`, `description`, `definition`.\n- `database`: names only; `search` and `detail` are rejected.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor`; keep `kind`, `search`, and `detail` the same across pages.\n</pagination>\n",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -176,11 +176,11 @@ expression: tools
     "outputSchema": {
       "type": "object",
       "properties": {
-        "entries": {
-          "description": "Page of matching entries. Shape depends on the request's `detailed` flag.",
+        "objects": {
+          "description": "Page of matching objects. Shape depends on the request's `detail`.",
           "anyOf": [
             {
-              "description": "Brief mode: sorted array of bare entity-name strings.",
+              "description": "Brief mode: sorted array of bare object-name strings.",
               "type": "array",
               "items": {
                 "type": "string"
@@ -199,7 +199,7 @@ expression: tools
         }
       },
       "required": [
-        "entries"
+        "objects"
       ]
     },
     "annotations": {

@@ -14,7 +14,7 @@ use rmcp::model::ServerConfig;
 use rmcp::{ServerHandler, tool_handler};
 
 use crate::connection::SqliteConnection;
-use crate::tools::{ExplainQueryTool, ObjectsTool, ReadQueryTool, WriteQueryTool};
+use crate::tools::{ExplainTool, ObjectsTool, ReadTool, WriteTool};
 
 /// Backend-specific description for `SQLite`.
 const DESCRIPTION: &str = "The privacy first MCP server for SQL databases.";
@@ -30,9 +30,9 @@ const INSTRUCTIONS_READ_ONLY: &str = include_str!("../assets/instructions/read-o
 /// `SQLite` has no `database` field, so no tool is pinned.
 const TOOLS: &[ToolSpec<SqliteHandler>] = &[
     ToolSpec::tool::<ObjectsTool>(false, false),
-    ToolSpec::tool::<ReadQueryTool>(false, false),
-    ToolSpec::tool::<ExplainQueryTool>(false, false),
-    ToolSpec::tool::<WriteQueryTool>(false, true),
+    ToolSpec::tool::<ReadTool>(false, false),
+    ToolSpec::tool::<ExplainTool>(false, false),
+    ToolSpec::tool::<WriteTool>(false, true),
 ];
 
 /// `SQLite` file-based database handler.

@@ -1,4 +1,4 @@
-//! `EXPLAIN` / `ANALYZE` statement builder for `explainQuery`.
+//! `EXPLAIN` / `ANALYZE` statement builder for `explain`.
 
 use dbmcp_types::database;
 

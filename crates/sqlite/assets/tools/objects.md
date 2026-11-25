@@ -18,8 +18,8 @@ Use before writing SQL to discover object names and shapes. Prefer this over que
 </examples>
 
 <what_it_returns>
-`detail: "names"`: `{"entries": [...]}`, a sorted array of name strings.
-`detail: "full"`: `{"entries": {name: metadata}}`; the name is the key and is not repeated. Metadata per kind:
+`detail: "names"`: `{"objects": [...]}`, a sorted array of name strings.
+`detail: "full"`: `{"objects": {name: metadata}}`; the name is the key and is not repeated. Metadata per kind:
 - `table`: `schema`, `kind`, `owner`, `comment`, `columns`, `constraints`, `indexes`, `triggers`.
 - `view`: names only; `search` and `detail` are rejected.
 - `trigger`: `schema`, `table`, `definition` (the stored `CREATE TRIGGER` text).

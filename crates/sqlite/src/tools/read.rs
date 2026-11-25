@@ -3,36 +3,28 @@
 use dbmcp_privacy::MaybeRedact as _;
 use dbmcp_server::listing::Cursor;
 use dbmcp_server::truncate::{Truncation, caps};
-use dbmcp_server::types::{ReadQueryRequest, ReadQueryResponse, resolve_timeout};
+use dbmcp_server::types::{ReadResponse, resolve_timeout};
+use dbmcp_truncate::{Window, fit};
+
 use dbmcp_sql::Dialect;
 use dbmcp_sql::StatementKind;
 use dbmcp_sql::pagination::{Page, plan};
 use dbmcp_sql::validation::validate_read;
-use dbmcp_truncate::{Window, fit};
-use dbmcp_types::database;
 
 use super::prelude::*;
+use crate::types::ReadRequest;
 use dbmcp_policy::Access;
 
 const NAME: &str = "read";
 const TITLE: &str = "Read";
-const DESCRIPTION_PINNED: &str = include_str!("../../assets/tools/read_query/pinned.md");
-const DESCRIPTION_UNPINNED: &str = include_str!("../../assets/tools/read_query/unpinned.md");
+const DESCRIPTION: &str = include_str!("../../assets/tools/read.md");
 
-fn annotations() -> ToolAnnotations {
-    ToolAnnotations::new()
-        .read_only(true)
-        .destructive(false)
-        .idempotent(true)
-        .open_world(true)
-}
+/// Marker type for the `read` MCP tool.
+pub(crate) struct ReadTool;
 
-/// Marker type for the `readQuery` MCP tool.
-pub(crate) struct ReadQueryTool<const PINNED: bool>;
-
-impl<const PINNED: bool> ToolBase for ReadQueryTool<PINNED> {
-    type Parameter = ReadQueryRequest;
-    type Output = ReadQueryResponse;
+impl ToolBase for ReadTool {
+    type Parameter = ReadRequest;
+    type Output = ReadResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
@@ -44,18 +36,11 @@ impl<const PINNED: bool> ToolBase for ReadQueryTool<PINNED> {
     }
 
     fn description() -> Option<Cow<'static, str>> {
-        Some(
-            if PINNED {
-                DESCRIPTION_PINNED
-            } else {
-                DESCRIPTION_UNPINNED
-            }
-            .into(),
-        )
+        Some(DESCRIPTION.into())
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>(PINNED))
+        Some(input_schema::<Self::Parameter>(true))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
@@ -63,71 +48,57 @@ impl<const PINNED: bool> ToolBase for ReadQueryTool<PINNED> {
     }
 
     fn annotations() -> Option<ToolAnnotations> {
-        Some(annotations())
+        Some(
+            ToolAnnotations::new()
+                .read_only(true)
+                .destructive(false)
+                .idempotent(true)
+                .open_world(true),
+        )
     }
 }
 
-impl<const PINNED: bool> AsyncTool<MysqlHandler> for ReadQueryTool<PINNED> {
-    async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler
-            .read_query(params.query, params.database, params.cursor, params.timeout)
-            .await
+impl AsyncTool<SqliteHandler> for ReadTool {
+    async fn invoke(handler: &SqliteHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
+        handler.read(params).await
     }
 }
 
-impl MysqlHandler {
+impl SqliteHandler {
     /// Executes a read-only SQL query, paginating `SELECT` result rows.
     ///
-    /// Validates that the query is read-only and runs it in a read-only
-    /// transaction, so the database rejects writes the validator misses.
-    /// It then dispatches on the classified [`StatementKind`]: `Select` gets
+    /// Validates that the query is read-only and runs it under
+    /// `query_only`, so `SQLite` rejects writes the validator misses. It
+    /// then dispatches on the classified [`StatementKind`]: `Select` gets
     /// the page window spliced into its own top-level `LIMIT`/`OFFSET`, or
     /// runs unchanged with the page cut client-side when it cannot be spliced;
-    /// `NonSelect` (SHOW, DESCRIBE, EXPLAIN) is executed as-is and
-    /// returned in a single page. A malformed `cursor` is rejected by the
-    /// serde deserializer before this method is called, which rmcp reports
-    /// as a tool result with `isError: true`.
+    /// `NonSelect` (`EXPLAIN` under the `SQLite` dialect) is executed as-is
+    /// and returned in a single page. A malformed `cursor` is rejected by the serde deserializer
+    /// before this method is called, which rmcp reports as a tool result
+    /// with `isError: true`.
     ///
     /// # Errors
     ///
     /// Returns [`SqlError::ReadOnlyViolation`] if the query is not
     /// read-only, [`SqlError::UseBlocked`] for `USE`,
-    /// [`SqlError::DiagnosticsBlocked`] for `SHOW WARNINGS` / `SHOW ERRORS`,
-    /// [`SqlError::ExecutableCommentBlocked`] for `/*! … */` / `/*M! … */`,
-    /// [`SqlError::UnreadableCharacter`] for SQL the server reads otherwise, or
+    /// [`SqlError::DiagnosticsBlocked`] for `SHOW WARNINGS` / `SHOW ERRORS`, or
     /// [`SqlError::Query`] if the backend reports an error. With column
     /// rules, also the policy's rejection or a withheld database error.
     ///
     /// [`SqlError::DiagnosticsBlocked`]: dbmcp_sql::SqlError::DiagnosticsBlocked
-    /// [`SqlError::ExecutableCommentBlocked`]: dbmcp_sql::SqlError::ExecutableCommentBlocked
     /// [`SqlError::Query`]: dbmcp_sql::SqlError::Query
     /// [`SqlError::ReadOnlyViolation`]: dbmcp_sql::SqlError::ReadOnlyViolation
-    /// [`SqlError::UnreadableCharacter`]: dbmcp_sql::SqlError::UnreadableCharacter
     /// [`SqlError::UseBlocked`]: dbmcp_sql::SqlError::UseBlocked
-    pub async fn read_query(
-        &self,
-        query: String,
-        database: Option<String>,
-        cursor: Option<Cursor>,
-        timeout: Option<u64>,
-    ) -> Result<ReadQueryResponse, ErrorData> {
-        let kind = validate_read(
-            &query,
-            match self.config.backend {
-                database::Backend::Mariadb => Dialect::Mariadb,
-                _ => Dialect::Mysql,
-            },
-        )?;
-
+    pub async fn read(&self, ReadRequest { query, cursor, timeout }: ReadRequest) -> Result<ReadResponse, ErrorData> {
+        let kind = validate_read(&query, Dialect::Sqlite)?;
         let timeout = resolve_timeout(timeout, self.config.query_timeout, self.config.max_query_timeout)?;
-        let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
         let start = cursor.map_or(0, |c| c.offset);
         let page_size = Some(usize::from(self.config.page_size));
         let (sql, offset, size) = match kind {
             StatementKind::Select => {
                 let limit = u64::from(self.config.page_size) + 1;
-                match plan(&query, &sqlparser::dialect::MySqlDialect {}, limit, start) {
+                match plan(&query, &sqlparser::dialect::SQLiteDialect {}, limit, start) {
                     Page::Merged(sql) => (Cow::Owned(sql), 0, page_size),
                     Page::Skip => (Cow::Borrowed(query.as_str()), start, page_size),
                 }
@@ -137,12 +108,12 @@ impl MysqlHandler {
         let caps = caps(self.config.max_cell_chars, self.config.max_response_chars);
         let mut window = Window::new(offset, size, caps);
         let rows = if let Some(policy) = &self.policy {
-            self.enforce(policy, &sql, Access::Read, timeout, database, &mut window)
+            self.enforce(policy, &sql, Access::Read, timeout, &mut window)
                 .await?
                 .rows
         } else {
             self.connection
-                .read_json(&*sql, database, timeout, |row| window.push(row))
+                .read_json(&*sql, None, timeout, |row| window.push(row))
                 .await?;
             self.redactor
                 .redact_rows(window.items)
@@ -168,7 +139,7 @@ impl MysqlHandler {
                 Truncation::new(fitted.cut, fitted.dropped.saturating_add(window.rest)),
             ),
         };
-        Ok(ReadQueryResponse {
+        Ok(ReadResponse {
             rows: fitted.items,
             next_cursor,
             truncation,
