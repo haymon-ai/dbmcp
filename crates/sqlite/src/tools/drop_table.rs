@@ -3,7 +3,7 @@
 use dbmcp_server::types::MessageResponse;
 
 use super::prelude::*;
-use crate::connection::quote_ident;
+use crate::queries;
 use crate::types::DropTableRequest;
 
 const NAME: &str = "dropTable";
@@ -66,8 +66,7 @@ impl SqliteHandler {
     /// [`SqlError::Query`]: dbmcp_sql::SqlError::Query
     /// [`SqlError::ReadOnlyViolation`]: dbmcp_sql::SqlError::ReadOnlyViolation
     pub async fn drop_table(&self, DropTableRequest { table }: DropTableRequest) -> Result<MessageResponse, ErrorData> {
-        let drop_sql = format!("DROP TABLE {}", quote_ident(&table));
-        self.connection.execute(drop_sql.as_str(), None).await?;
+        queries::tables::drop(&self.connection, &table).await?;
 
         Ok(MessageResponse {
             message: format!("Table '{table}' dropped successfully."),

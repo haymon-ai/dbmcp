@@ -1,0 +1,408 @@
+//! Table listing statements and `DROP TABLE`.
+
+use dbmcp_server::listing::Page;
+use dbmcp_sql::{Connection as _, SqlError};
+use serde_json::Value;
+
+use super::ident;
+use crate::connection::MysqlConnection;
+
+/// Brief-mode SQL: `information_schema.TABLES` filtered to `BASE TABLE` rows.
+///
+/// `CAST(... AS CHAR)` forces a `VARCHAR` decode — `MySQL` 9 reports
+/// `information_schema` text columns as `VARBINARY`, which the `String`
+/// decoder rejects. `LOWER(...)` on both sides of `LIKE` makes the match
+/// case-insensitive regardless of column collation (`MySQL` 9 reports
+/// `TABLE_NAME` as `VARBINARY` — binary collation is case-sensitive).
+const NAMES: &str = r"
+    SELECT CAST(TABLE_NAME AS CHAR)
+    FROM information_schema.TABLES
+    WHERE TABLE_SCHEMA = ?
+      AND TABLE_TYPE = 'BASE TABLE'
+      AND (? IS NULL OR LOWER(TABLE_NAME) LIKE LOWER(CONCAT('%', ?, '%')))
+    ORDER BY TABLE_NAME
+    LIMIT ? OFFSET ?";
+
+/// Lists one `page` of table names in `database`, filtered by `pattern` when given.
+///
+/// # Errors
+///
+/// Returns the [`SqlError`] of a failed query.
+pub(crate) async fn names(
+    connection: &MysqlConnection,
+    page: Page,
+    pattern: Option<&str>,
+    database: &str,
+) -> Result<Vec<String>, SqlError> {
+    connection
+        .fetch_scalar(
+            sqlx::query(NAMES)
+                .bind(database)
+                .bind(pattern)
+                .bind(pattern)
+                .bind(page.limit())
+                .bind(page.offset()),
+            None,
+        )
+        .await
+}
+
+/// Detailed-mode SQL: per-table `JSON_OBJECT` projection over a CTE chain.
+///
+/// Bind order: `database`, `pattern`, `pattern`, `limit`, `offset`, `database`.
+/// `MySQL`/`MariaDB` lack `QUOTE_IDENT`; backtick-quoting is inlined per identifier.
+/// `MySQL` 9 rejects inline `ORDER BY` in `JSON_ARRAYAGG`, so [`order_arrays`] sorts in Rust. `CAST(... AS JSON)` is
+/// avoided because `MariaDB` rejects it (its `JSON` type is a `LONGTEXT` alias,
+/// not a CAST target); `JSON_EXTRACT(text, '$')` re-parses to JSON on both.
+/// `JSON_QUOTE` inside `GROUP_CONCAT` returns empty on `MySQL` 9 (`information_schema`
+/// text columns are `VARBINARY`-typed), so column names are wrapped via plain
+/// `CONCAT('"', x, '"')` — safe because identifiers cannot contain `"` or `\`.
+/// JSON booleans are produced via `JSON_EXTRACT(IF(cond, 'true', 'false'), '$')`.
+/// The `triggers_info` CTE renders the `DEFINER` clause in canonical
+/// `SHOW CREATE TRIGGER` form with each component backtick-quoted. The
+/// `DEFINER` column stores `user@host` unquoted and `user` may itself
+/// contain `@` (e.g. `'foo@bar'@'localhost'`), so the host is the
+/// segment after the **last** `@` (`SUBSTRING_INDEX(..., '@', -1)`) and the
+/// user is everything before it (`LEFT(..., LENGTH - host_len - 1)`), with
+/// embedded backticks doubled in both components.
+const DETAILS: &str = r#"
+WITH table_info AS (
+    SELECT
+        t.TABLE_SCHEMA AS table_schema,
+        t.TABLE_NAME   AS table_name,
+        NULLIF(t.TABLE_COMMENT, '') AS table_comment
+    FROM information_schema.TABLES t
+    WHERE t.TABLE_SCHEMA = ?
+      AND t.TABLE_TYPE   = 'BASE TABLE'
+      AND (? IS NULL OR LOWER(t.TABLE_NAME) LIKE LOWER(CONCAT('%', ?, '%')))
+    ORDER BY t.TABLE_NAME
+    LIMIT ? OFFSET ?
+),
+partitions_info AS (
+    SELECT
+        p.TABLE_SCHEMA,
+        p.TABLE_NAME,
+        MAX(p.PARTITION_METHOD IS NOT NULL) AS has_partitions
+    FROM information_schema.PARTITIONS p
+    WHERE p.TABLE_SCHEMA = ?
+    GROUP BY p.TABLE_SCHEMA, p.TABLE_NAME
+),
+columns_info AS (
+    SELECT
+        c.TABLE_SCHEMA,
+        c.TABLE_NAME,
+        c.COLUMN_NAME      AS column_name,
+        c.COLUMN_TYPE      AS data_type,
+        c.ORDINAL_POSITION AS ordinal_position,
+        (c.IS_NULLABLE = 'YES') AS nullable,
+        IF(c.EXTRA LIKE '%GENERATED%', c.GENERATION_EXPRESSION, c.COLUMN_DEFAULT) AS column_default,
+        NULLIF(c.COLUMN_COMMENT, '') AS column_comment
+    FROM information_schema.COLUMNS c
+    JOIN table_info ti
+      ON ti.table_schema = c.TABLE_SCHEMA
+     AND ti.table_name   = c.TABLE_NAME
+),
+constraints_info AS (
+    SELECT
+        tc.TABLE_SCHEMA,
+        tc.TABLE_NAME,
+        tc.CONSTRAINT_NAME AS name,
+        tc.CONSTRAINT_TYPE AS type,
+        JSON_EXTRACT(CONCAT('[', IFNULL(GROUP_CONCAT(CONCAT('"', kcu.COLUMN_NAME, '"') ORDER BY kcu.ORDINAL_POSITION SEPARATOR ','), ''), ']'), '$') AS columns,
+        CONCAT(
+            IF(tc.CONSTRAINT_TYPE = 'PRIMARY KEY', 'PRIMARY KEY (', 'UNIQUE ('),
+            GROUP_CONCAT(
+                CONCAT('`', REPLACE(kcu.COLUMN_NAME, '`', '``'), '`')
+                ORDER BY kcu.ORDINAL_POSITION SEPARATOR ', '
+            ),
+            ')'
+        ) AS definition,
+        CAST(NULL AS CHAR)  AS referenced_table,
+        CAST(NULL AS CHAR)  AS referenced_columns
+    FROM information_schema.TABLE_CONSTRAINTS tc
+    JOIN information_schema.KEY_COLUMN_USAGE kcu
+      ON kcu.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA
+     AND kcu.CONSTRAINT_NAME   = tc.CONSTRAINT_NAME
+     AND kcu.TABLE_SCHEMA      = tc.TABLE_SCHEMA
+     AND kcu.TABLE_NAME        = tc.TABLE_NAME
+    JOIN table_info ti
+      ON ti.table_schema = tc.TABLE_SCHEMA
+     AND ti.table_name   = tc.TABLE_NAME
+    WHERE tc.CONSTRAINT_TYPE IN ('PRIMARY KEY', 'UNIQUE')
+    GROUP BY tc.TABLE_SCHEMA, tc.TABLE_NAME, tc.CONSTRAINT_NAME, tc.CONSTRAINT_TYPE
+    UNION ALL
+    SELECT
+        tc.TABLE_SCHEMA,
+        tc.TABLE_NAME,
+        tc.CONSTRAINT_NAME AS name,
+        'FOREIGN KEY'      AS type,
+        JSON_EXTRACT(CONCAT('[', IFNULL(GROUP_CONCAT(CONCAT('"', kcu.COLUMN_NAME, '"') ORDER BY kcu.ORDINAL_POSITION SEPARATOR ','), ''), ']'), '$') AS columns,
+        CONCAT(
+            'FOREIGN KEY (',
+            GROUP_CONCAT(
+                CONCAT('`', REPLACE(kcu.COLUMN_NAME, '`', '``'), '`')
+                ORDER BY kcu.ORDINAL_POSITION SEPARATOR ', '
+            ),
+            ') REFERENCES ',
+            CONCAT('`', REPLACE(MAX(kcu.REFERENCED_TABLE_NAME), '`', '``'), '`'),
+            '(',
+            GROUP_CONCAT(
+                CONCAT('`', REPLACE(kcu.REFERENCED_COLUMN_NAME, '`', '``'), '`')
+                ORDER BY kcu.ORDINAL_POSITION SEPARATOR ', '
+            ),
+            ') ON UPDATE ', MAX(rc.UPDATE_RULE),
+            ' ON DELETE ',  MAX(rc.DELETE_RULE)
+        ) AS definition,
+        MAX(kcu.REFERENCED_TABLE_NAME) AS referenced_table,
+        JSON_EXTRACT(CONCAT('[', IFNULL(GROUP_CONCAT(CONCAT('"', kcu.REFERENCED_COLUMN_NAME, '"') ORDER BY kcu.ORDINAL_POSITION SEPARATOR ','), ''), ']'), '$') AS referenced_columns
+    FROM information_schema.TABLE_CONSTRAINTS tc
+    JOIN information_schema.KEY_COLUMN_USAGE kcu
+      ON kcu.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA
+     AND kcu.CONSTRAINT_NAME   = tc.CONSTRAINT_NAME
+     AND kcu.TABLE_SCHEMA      = tc.TABLE_SCHEMA
+     AND kcu.TABLE_NAME        = tc.TABLE_NAME
+    JOIN information_schema.REFERENTIAL_CONSTRAINTS rc
+      ON rc.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA
+     AND rc.CONSTRAINT_NAME   = tc.CONSTRAINT_NAME
+    JOIN table_info ti
+      ON ti.table_schema = tc.TABLE_SCHEMA
+     AND ti.table_name   = tc.TABLE_NAME
+    WHERE tc.CONSTRAINT_TYPE = 'FOREIGN KEY'
+    GROUP BY tc.TABLE_SCHEMA, tc.TABLE_NAME, tc.CONSTRAINT_NAME
+    UNION ALL
+    SELECT
+        cc.CONSTRAINT_SCHEMA AS TABLE_SCHEMA,
+        tc.TABLE_NAME,
+        cc.CONSTRAINT_NAME   AS name,
+        'CHECK'              AS type,
+        JSON_ARRAY()         AS columns,
+        cc.CHECK_CLAUSE      AS definition,
+        CAST(NULL AS CHAR)   AS referenced_table,
+        CAST(NULL AS CHAR)   AS referenced_columns
+    FROM information_schema.CHECK_CONSTRAINTS cc
+    JOIN information_schema.TABLE_CONSTRAINTS tc
+      ON tc.CONSTRAINT_SCHEMA = cc.CONSTRAINT_SCHEMA
+     AND tc.CONSTRAINT_NAME   = cc.CONSTRAINT_NAME
+    JOIN table_info ti
+      ON ti.table_schema = tc.TABLE_SCHEMA
+     AND ti.table_name   = tc.TABLE_NAME
+),
+indexes_info AS (
+    SELECT
+        s.TABLE_SCHEMA,
+        s.TABLE_NAME,
+        s.INDEX_NAME AS index_name,
+        GROUP_CONCAT(
+            CASE
+                WHEN s.SUB_PART IS NOT NULL THEN CONCAT('`', REPLACE(s.COLUMN_NAME, '`', '``'), '`', '(', s.SUB_PART, ')')
+                ELSE CONCAT('`', REPLACE(s.COLUMN_NAME, '`', '``'), '`')
+            END
+            ORDER BY s.SEQ_IN_INDEX SEPARATOR ', '
+        ) AS definition_cols,
+        JSON_EXTRACT(CONCAT('[', IFNULL(GROUP_CONCAT(CONCAT('"', s.COLUMN_NAME, '"') ORDER BY s.SEQ_IN_INDEX SEPARATOR ','), ''), ']'), '$') AS columns,
+        (MIN(s.NON_UNIQUE) = 0)        AS is_unique,
+        (s.INDEX_NAME = 'PRIMARY')     AS is_primary,
+        LOWER(MIN(s.INDEX_TYPE))       AS method,
+        MIN(s.INDEX_TYPE)              AS index_type_raw
+    FROM information_schema.STATISTICS s
+    JOIN table_info ti
+      ON ti.table_schema = s.TABLE_SCHEMA
+     AND ti.table_name   = s.TABLE_NAME
+    GROUP BY s.TABLE_SCHEMA, s.TABLE_NAME, s.INDEX_NAME
+),
+triggers_info AS (
+    SELECT
+        tr.EVENT_OBJECT_SCHEMA AS TABLE_SCHEMA,
+        tr.EVENT_OBJECT_TABLE  AS TABLE_NAME,
+        tr.TRIGGER_NAME        AS trigger_name,
+        CONCAT(
+            'CREATE DEFINER=`',
+            REPLACE(LEFT(tr.DEFINER, LENGTH(tr.DEFINER) - LENGTH(SUBSTRING_INDEX(tr.DEFINER, '@', -1)) - 1), '`', '``'),
+            '`@`',
+            REPLACE(SUBSTRING_INDEX(tr.DEFINER, '@', -1), '`', '``'),
+            '`',
+            ' TRIGGER ', '`', REPLACE(tr.TRIGGER_NAME, '`', '``'), '`',
+            ' ', tr.ACTION_TIMING, ' ', tr.EVENT_MANIPULATION,
+            ' ON ',
+            '`', REPLACE(tr.EVENT_OBJECT_SCHEMA, '`', '``'), '`',
+            '.',
+            '`', REPLACE(tr.EVENT_OBJECT_TABLE, '`', '``'), '`',
+            ' FOR EACH ROW ', tr.ACTION_STATEMENT
+        ) AS definition
+    FROM information_schema.TRIGGERS tr
+    JOIN table_info ti
+      ON ti.table_schema = tr.EVENT_OBJECT_SCHEMA
+     AND ti.table_name   = tr.EVENT_OBJECT_TABLE
+)
+SELECT
+    CAST(ti.table_name AS CHAR) AS name,
+    JSON_OBJECT(
+        'schema',  ti.table_schema,
+        'kind',    IF(COALESCE(pi.has_partitions, FALSE), 'PARTITIONED_TABLE', 'TABLE'),
+        'owner',   NULL,
+        'comment', ti.table_comment,
+        'columns', COALESCE((
+            SELECT JSON_ARRAYAGG(JSON_OBJECT(
+                'name',            ci.column_name,
+                'dataType',        ci.data_type,
+                'ordinalPosition', ci.ordinal_position,
+                'nullable',        JSON_EXTRACT(IF(ci.nullable = 1, 'true', 'false'), '$'),
+                'default',         ci.column_default,
+                'comment',         ci.column_comment
+            ))
+            FROM columns_info ci
+            WHERE ci.TABLE_SCHEMA = ti.table_schema AND ci.TABLE_NAME = ti.table_name
+        ), JSON_ARRAY()),
+        'constraints', COALESCE((
+            SELECT JSON_ARRAYAGG(JSON_OBJECT(
+                'name',              co.name,
+                'type',              co.type,
+                'columns',           JSON_EXTRACT(co.columns, '$'),
+                'definition',        co.definition,
+                'referencedTable',   co.referenced_table,
+                'referencedColumns', JSON_EXTRACT(co.referenced_columns, '$')
+            ))
+            FROM constraints_info co
+            WHERE co.TABLE_SCHEMA = ti.table_schema AND co.TABLE_NAME = ti.table_name
+        ), JSON_ARRAY()),
+        'indexes', COALESCE((
+            SELECT JSON_ARRAYAGG(JSON_OBJECT(
+                'name',       ii.index_name,
+                'columns',    JSON_EXTRACT(ii.columns, '$'),
+                'unique',     JSON_EXTRACT(IF(ii.is_unique = 1, 'true', 'false'), '$'),
+                'primary',    JSON_EXTRACT(IF(ii.is_primary = 1, 'true', 'false'), '$'),
+                'method',     ii.method,
+                'definition', IF(ii.is_primary = 1,
+                    CONCAT('PRIMARY KEY (', ii.definition_cols, ') USING ', ii.index_type_raw),
+                    CONCAT(
+                        'CREATE ',
+                        CASE
+                            WHEN ii.is_unique = 1                THEN 'UNIQUE '
+                            WHEN ii.index_type_raw = 'FULLTEXT'  THEN 'FULLTEXT '
+                            WHEN ii.index_type_raw = 'SPATIAL'   THEN 'SPATIAL '
+                            ELSE ''
+                        END,
+                        'INDEX ', '`', REPLACE(ii.index_name, '`', '``'), '`',
+                        ' ON ',
+                        '`', REPLACE(ti.table_schema, '`', '``'), '`',
+                        '.',
+                        '`', REPLACE(ti.table_name, '`', '``'), '`',
+                        '(', ii.definition_cols, ') USING ', ii.index_type_raw
+                    )
+                )
+            ))
+            FROM indexes_info ii
+            WHERE ii.TABLE_SCHEMA = ti.table_schema AND ii.TABLE_NAME = ti.table_name
+        ), JSON_ARRAY()),
+        'triggers', COALESCE((
+            SELECT JSON_ARRAYAGG(JSON_OBJECT(
+                'name',       tri.trigger_name,
+                'definition', tri.definition,
+                'enabled',    JSON_EXTRACT('true', '$')
+            ))
+            FROM triggers_info tri
+            WHERE tri.TABLE_SCHEMA = ti.table_schema AND tri.TABLE_NAME = ti.table_name
+        ), JSON_ARRAY())
+    ) AS entry
+FROM table_info ti
+LEFT JOIN partitions_info pi
+  ON pi.TABLE_SCHEMA = ti.table_schema
+ AND pi.TABLE_NAME   = ti.table_name
+ORDER BY ti.table_name"#;
+
+/// Lists one `page` of detailed table entries in `database`, filtered by `pattern`.
+///
+/// Each entry's arrays come back sorted by [`order_arrays`].
+///
+/// # Errors
+///
+/// Returns the [`SqlError`] of a failed query.
+pub(crate) async fn details(
+    connection: &MysqlConnection,
+    page: Page,
+    pattern: Option<&str>,
+    database: &str,
+) -> Result<Vec<(String, Value)>, SqlError> {
+    let mut rows: Vec<(String, Value)> = connection
+        .fetch(
+            sqlx::query(DETAILS)
+                .bind(database)
+                .bind(pattern)
+                .bind(pattern)
+                .bind(page.limit())
+                .bind(page.offset())
+                .bind(database),
+            None,
+        )
+        .await?;
+    for (_, entry) in &mut rows {
+        order_arrays(entry);
+    }
+    Ok(rows)
+}
+
+/// Sorts one detailed entry's arrays: `columns` by position, the rest by name.
+///
+/// `JSON_ARRAYAGG` has no ordering on `MySQL`, so element order otherwise
+/// follows the plan and can change between calls.
+fn order_arrays(entry: &mut Value) {
+    for (key, field) in [
+        ("columns", "ordinalPosition"),
+        ("constraints", "name"),
+        ("indexes", "name"),
+        ("triggers", "name"),
+    ] {
+        if let Some(Value::Array(items)) = entry.get_mut(key) {
+            items.sort_by(|a, b| {
+                let (a, b) = (&a[field], &b[field]);
+                match (a.as_u64(), b.as_u64()) {
+                    (Some(a), Some(b)) => a.cmp(&b),
+                    _ => a.as_str().cmp(&b.as_str()),
+                }
+            });
+        }
+    }
+}
+
+/// Statement prefix of `drop`; the quoted table name follows.
+const DROP: &str = "DROP TABLE";
+
+/// Drops `table` in `database`, quoted as an identifier.
+///
+/// # Errors
+///
+/// Returns the [`SqlError`] of a failed statement, or
+/// [`SqlError::ReadOnlyViolation`] in read-only mode.
+pub(crate) async fn drop(connection: &MysqlConnection, table: &str, database: Option<&str>) -> Result<(), SqlError> {
+    connection
+        .execute(format!("{DROP} {}", ident::quote(table)).as_str(), database)
+        .await?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::order_arrays;
+
+    #[test]
+    fn order_arrays_sorts_columns_by_position_and_the_rest_by_name() {
+        let mut entry = json!({
+            "columns": [{"name": "b", "ordinalPosition": 10}, {"name": "a", "ordinalPosition": 2}],
+            "constraints": [{"name": "uq_z"}, {"name": "PRIMARY"}, {"name": "fk_y"}],
+            "indexes": [{"name": "idx_b"}, {"name": "idx_a"}],
+            "triggers": [{"name": "t2"}, {"name": "t1"}],
+        });
+        order_arrays(&mut entry);
+        assert_eq!(
+            entry,
+            json!({
+                "columns": [{"name": "a", "ordinalPosition": 2}, {"name": "b", "ordinalPosition": 10}],
+                "constraints": [{"name": "PRIMARY"}, {"name": "fk_y"}, {"name": "uq_z"}],
+                "indexes": [{"name": "idx_a"}, {"name": "idx_b"}],
+                "triggers": [{"name": "t1"}, {"name": "t2"}],
+            })
+        );
+    }
+}

@@ -9,6 +9,7 @@ use dbmcp_truncate::{Window, fit};
 use dbmcp_types::database;
 
 use super::prelude::*;
+use crate::queries;
 use dbmcp_policy::Access;
 
 const NAME: &str = "explainQuery";
@@ -124,12 +125,7 @@ impl MysqlHandler {
         let timeout = resolve_timeout(timeout, self.config.query_timeout, self.config.max_query_timeout)?;
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
-        // MariaDB replaced `EXPLAIN ANALYZE` with the `ANALYZE` statement.
-        let explain_sql = match (analyze, self.config.backend) {
-            (true, database::Backend::Mariadb) => format!("ANALYZE FORMAT=JSON {query}"),
-            (true, _) => format!("EXPLAIN ANALYZE {query}"),
-            (false, _) => format!("EXPLAIN FORMAT=JSON {query}"),
-        };
+        let explain_sql = queries::explain::statement(&query, analyze, self.config.backend);
 
         // ANALYZE executes the statement, and planning alone can run user functions.
         let caps = caps(self.config.max_cell_chars, self.config.max_response_chars);

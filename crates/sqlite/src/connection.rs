@@ -24,6 +24,8 @@ use sqlx::{Executor as _, SqlStr};
 use sqlx_json::RowExt as _;
 use tracing::{debug, info, warn};
 
+use crate::queries;
+
 /// Virtual machine instructions `SQLite` runs between deadline checks.
 const PROGRESS_OPS: i32 = 1000;
 
@@ -126,7 +128,7 @@ impl Connection for SqliteConnection {
         mut sink: impl FnMut(Value) + Send,
     ) -> Result<(), sqlx::Error> {
         if !self.read_only() {
-            sqlx::query("PRAGMA query_only = ON").execute(&mut *conn).await?;
+            queries::session::query_only(&mut *conn, true).await?;
         }
         let mut rows = conn.fetch(query);
         while let Some(row) = rows.try_next().await? {
@@ -179,7 +181,7 @@ fn create_lazy_pool(config: &database::Config, rules: bool) -> SqlitePool {
     if !config.read_only {
         pool_ops = pool_ops.before_acquire(|conn, _meta| {
             Box::pin(async move {
-                sqlx::query("PRAGMA query_only = OFF").execute(&mut *conn).await?;
+                queries::session::query_only(&mut *conn, false).await?;
                 Ok(true)
             })
         });
@@ -196,10 +198,7 @@ fn create_lazy_pool(config: &database::Config, rules: bool) -> SqlitePool {
             if checked.load(Ordering::Acquire) {
                 return Ok(());
             }
-            let Ok(version) = sqlx::query_scalar::<_, String>("SELECT sqlite_version()")
-                .fetch_one(&mut *conn)
-                .await
-            else {
+            let Ok(version) = queries::session::version(&mut *conn).await else {
                 debug!("could not read the SQLite version; checking again on the next connection");
                 return Ok(());
             };
@@ -218,12 +217,6 @@ fn create_lazy_pool(config: &database::Config, rules: bool) -> SqlitePool {
     });
 
     pool_ops.connect_lazy_with(conn_ops)
-}
-
-/// Quotes `value` as a `SQLite` identifier (ANSI double-quote style).
-#[must_use]
-pub(crate) fn quote_ident(value: &str) -> String {
-    dbmcp_sql::sanitize::quote_ident(value, '"')
 }
 
 #[cfg(test)]

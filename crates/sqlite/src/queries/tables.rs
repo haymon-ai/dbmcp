@@ -1,0 +1,254 @@
+//! Table listing statements and `DROP TABLE`.
+
+use dbmcp_server::listing::Page;
+use dbmcp_sql::{Connection as _, SqlError};
+use serde_json::Value;
+
+use super::ident;
+use crate::connection::SqliteConnection;
+
+/// Brief-mode SQL: `pragma_table_list` scan with optional `LIKE` filter.
+///
+/// `pragma_table_list` distinguishes ordinary tables (`type = 'table'`),
+/// virtual tables (`type = 'virtual'`), views (`type = 'view'`), and the
+/// automatically-generated shadow tables that back FTS5 / R-Tree / etc.
+/// (`type = 'shadow'`). Restricting to `('table', 'virtual')` hides shadow
+/// tables from users while still surfacing user-declared virtual tables.
+///
+/// `SQLite`'s `LIKE` operator is case-insensitive for ASCII by default and
+/// `dbmcp` does not toggle the `case_sensitive_like` PRAGMA, so a bare
+/// `LIKE` already matches case-insensitively (a `COLLATE NOCASE` on the
+/// RHS pattern would be a no-op — `LIKE` does not honor right-hand-side
+/// collation; see <https://www.sqlite.org/lang_expr.html>). User-facing
+/// wildcards (`%`, `_`) in `?1` flow straight into LIKE semantics — this
+/// matches the `PostgreSQL` contract established in commit `dbe917f`.
+const NAMES: &str = r"
+    SELECT tl.name
+    FROM pragma_table_list tl
+    WHERE tl.schema = 'main'
+      AND tl.type IN ('table', 'virtual')
+      AND tl.name NOT LIKE 'sqlite_%'
+      AND (?1 IS NULL OR tl.name LIKE '%' || ?1 || '%')
+    ORDER BY tl.name
+    LIMIT ?2 OFFSET ?3";
+
+/// Lists one `page` of table names, filtered by `pattern` when given.
+///
+/// # Errors
+///
+/// Returns the [`SqlError`] of a failed query.
+pub(crate) async fn names(
+    connection: &SqliteConnection,
+    page: Page,
+    pattern: Option<&str>,
+) -> Result<Vec<String>, SqlError> {
+    connection
+        .fetch_scalar(
+            sqlx::query(NAMES).bind(pattern).bind(page.limit()).bind(page.offset()),
+            None,
+        )
+        .await
+}
+
+/// Detailed-mode SQL: single CTE joining `sqlite_master` with `pragma_*`
+/// table-valued functions and aggregating each table's columns, constraints,
+/// indexes, and triggers into JSON via `json_object` / `json_group_array`.
+/// Every aggregate carries its own `ORDER BY` (`SQLite` 3.44+): columns by
+/// position, constraints, indexes, and triggers by name. Every scalar
+/// subquery feeding `json_object` is wrapped in `json(...)`: `SQLite` 3.54.1
+/// drops the JSON subtype across a subquery, which would embed the array as
+/// a string.
+///
+/// `LIMIT`/`OFFSET` are pushed into `table_info` so every downstream CTE scans
+/// at most `page_size + 1` tables, never the full schema.
+///
+/// `SQLite`-specific carve-outs (intentionally silent to clients per FR-012):
+/// CHECK constraints are not exposed by `SQLite`'s catalog, so `constraints[]`
+/// only emits PRIMARY KEY / FOREIGN KEY / UNIQUE entries. `owner`, `comment`,
+/// and column-level `comment` are always `NULL`. `method` is always `btree`,
+/// trigger `enabled` is always `true`, and `indexes[].definition` is either
+/// the raw `sqlite_master.sql` or, for auto-generated indexes with no user
+/// SQL, a synthesised `CREATE [UNIQUE] INDEX …` string so the field is never
+/// null. Columns use 1-based `ordinalPosition` (`cid + 1`) for cross-backend
+/// parity with `PostgreSQL`'s `pg_attribute.attnum`.
+const DETAILS: &str = r#"
+    WITH table_info AS (
+        SELECT
+            tl.name AS table_name,
+            CASE tl.type
+                WHEN 'virtual' THEN 'VIRTUAL_TABLE'
+                ELSE 'TABLE'
+            END AS kind
+        FROM pragma_table_list tl
+        WHERE tl.schema = 'main'
+          AND tl.type IN ('table', 'virtual')
+          AND tl.name NOT LIKE 'sqlite_%'
+          AND (?1 IS NULL OR tl.name LIKE '%' || ?1 || '%')
+        ORDER BY tl.name
+        LIMIT ?2 OFFSET ?3
+    ),
+    columns_info AS (
+        SELECT
+            ti.table_name,
+            c.cid AS cid,
+            json_object(
+                'name',            c.name,
+                'dataType',        c.type,
+                'ordinalPosition', c.cid + 1,
+                'nullable',        json(CASE WHEN c."notnull" = 0 THEN 'true' ELSE 'false' END),
+                'default',         c.dflt_value,
+                'comment',         NULL
+            ) AS column_json
+        FROM table_info ti, pragma_table_info(ti.table_name) c
+    ),
+    pk_constraints AS (
+        SELECT
+            ti.table_name,
+            json_object(
+                'name',       'PRIMARY',
+                'type',       'PRIMARY KEY',
+                'columns',    json_group_array(c.name ORDER BY c.pk),
+                'definition', 'PRIMARY KEY (' || group_concat('"' || c.name || '"', ', ' ORDER BY c.pk) || ')'
+            ) AS constraint_json
+        FROM table_info ti, pragma_table_info(ti.table_name) c
+        WHERE c.pk > 0
+        GROUP BY ti.table_name
+        HAVING COUNT(c.name) > 0
+    ),
+    fk_constraints AS (
+        SELECT
+            ti.table_name,
+            json_object(
+                'name',              'fk_' || ti.table_name || '_' || f.id,
+                'type',              'FOREIGN KEY',
+                'columns',           json_group_array(f."from" ORDER BY f.seq),
+                'definition',        'FOREIGN KEY (' || group_concat('"' || f."from" || '"', ', ' ORDER BY f.seq)
+                                     || ') REFERENCES "' || f."table" || '"('
+                                     || group_concat('"' || f."to" || '"', ', ' ORDER BY f.seq) || ')',
+                'referencedTable',   f."table",
+                'referencedColumns', json_group_array(f."to" ORDER BY f.seq)
+            ) AS constraint_json
+        FROM table_info ti, pragma_foreign_key_list(ti.table_name) f
+        GROUP BY ti.table_name, f.id
+    ),
+    unique_constraints AS (
+        SELECT
+            ti.table_name,
+            json_object(
+                'name',       i.name,
+                'type',       'UNIQUE',
+                'columns',    json((SELECT json_group_array(ii.name ORDER BY ii.seqno)
+                                    FROM pragma_index_info(i.name) ii)),
+                'definition', 'UNIQUE ('
+                              || (SELECT group_concat('"' || ii.name || '"', ', ' ORDER BY ii.seqno)
+                                  FROM pragma_index_info(i.name) ii)
+                              || ')'
+            ) AS constraint_json
+        FROM table_info ti, pragma_index_list(ti.table_name) i
+        WHERE i."unique" = 1 AND i.origin <> 'pk'
+    ),
+    all_constraints AS (
+        SELECT table_name, constraint_json FROM pk_constraints
+        UNION ALL
+        SELECT table_name, constraint_json FROM fk_constraints
+        UNION ALL
+        SELECT table_name, constraint_json FROM unique_constraints
+    ),
+    indexes_info AS (
+        SELECT
+            ti.table_name,
+            json_object(
+                'name',       il.name,
+                'columns',    json((SELECT json_group_array(ii.name ORDER BY ii.seqno) FROM pragma_index_info(il.name) ii)),
+                'unique',     json(CASE WHEN il."unique" = 1 THEN 'true' ELSE 'false' END),
+                'primary',    json(CASE WHEN il.origin = 'pk' THEN 'true' ELSE 'false' END),
+                'method',     'btree',
+                'definition', COALESCE(
+                    (SELECT m2.sql FROM sqlite_master m2 WHERE m2.type = 'index' AND m2.name = il.name),
+                    'CREATE ' || CASE il."unique" WHEN 1 THEN 'UNIQUE INDEX ' ELSE 'INDEX ' END
+                        || '"' || il.name || '" ON "' || ti.table_name || '"('
+                        || (SELECT group_concat('"' || ii.name || '"', ', ' ORDER BY ii.seqno) FROM pragma_index_info(il.name) ii)
+                        || ')'
+                )
+            ) AS index_json
+        FROM table_info ti, pragma_index_list(ti.table_name) il
+    ),
+    triggers_info AS (
+        SELECT
+            m.tbl_name AS table_name,
+            json_object(
+                'name',       m.name,
+                'definition', m.sql,
+                'enabled',    json('true')
+            ) AS trigger_json
+        FROM sqlite_master m
+        JOIN table_info ti ON ti.table_name = m.tbl_name
+        WHERE m.type = 'trigger'
+    )
+    SELECT
+        ti.table_name AS name,
+        json_object(
+            'schema',      'main',
+            'kind',        ti.kind,
+            'owner',       NULL,
+            'comment',     NULL,
+            'columns',     json(COALESCE(
+                               (SELECT json_group_array(json(ci.column_json) ORDER BY ci.cid)
+                                FROM columns_info ci
+                                WHERE ci.table_name = ti.table_name),
+                               '[]')),
+            'constraints', json(COALESCE(
+                               (SELECT json_group_array(json(ac.constraint_json) ORDER BY ac.constraint_json ->> 'name')
+                                FROM all_constraints ac
+                                WHERE ac.table_name = ti.table_name),
+                               '[]')),
+            'indexes',     json(COALESCE(
+                               (SELECT json_group_array(json(ii.index_json) ORDER BY ii.index_json ->> 'name')
+                                FROM indexes_info ii
+                                WHERE ii.table_name = ti.table_name),
+                               '[]')),
+            'triggers',    json(COALESCE(
+                               (SELECT json_group_array(json(tg.trigger_json) ORDER BY tg.trigger_json ->> 'name')
+                                FROM triggers_info tg
+                                WHERE tg.table_name = ti.table_name),
+                               '[]'))
+        ) AS entry
+    FROM table_info ti
+    ORDER BY ti.table_name"#;
+
+/// Lists one `page` of table names with their detail objects.
+///
+/// # Errors
+///
+/// Returns the [`SqlError`] of a failed query.
+pub(crate) async fn details(
+    connection: &SqliteConnection,
+    page: Page,
+    pattern: Option<&str>,
+) -> Result<Vec<(String, Value)>, SqlError> {
+    connection
+        .fetch(
+            sqlx::query(DETAILS)
+                .bind(pattern)
+                .bind(page.limit())
+                .bind(page.offset()),
+            None,
+        )
+        .await
+}
+
+/// Statement prefix of `drop`; the quoted table name follows.
+const DROP: &str = "DROP TABLE";
+
+/// Drops `table`, quoted as an identifier.
+///
+/// # Errors
+///
+/// Returns the [`SqlError`] of a failed statement, or
+/// [`SqlError::ReadOnlyViolation`] in read-only mode.
+pub(crate) async fn drop(connection: &SqliteConnection, table: &str) -> Result<(), SqlError> {
+    connection
+        .execute(format!("{DROP} {}", ident::quote(table)).as_str(), None)
+        .await?;
+    Ok(())
+}

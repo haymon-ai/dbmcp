@@ -6,6 +6,7 @@
 mod connection;
 mod handler;
 mod policy;
+mod queries;
 mod tools;
 pub mod types;
 

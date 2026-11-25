@@ -3,7 +3,7 @@
 use dbmcp_server::types::MessageResponse;
 
 use super::prelude::*;
-use crate::connection::quote_ident;
+use crate::queries;
 use crate::types::DropTableRequest;
 
 const NAME: &str = "dropTable";
@@ -80,8 +80,7 @@ impl MysqlHandler {
     pub async fn drop_table(&self, database: Option<String>, table: String) -> Result<MessageResponse, ErrorData> {
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
-        let drop_sql = format!("DROP TABLE {}", quote_ident(&table));
-        self.connection.execute(drop_sql.as_str(), database).await?;
+        queries::tables::drop(&self.connection, &table, database).await?;
 
         Ok(MessageResponse {
             message: format!("Table '{table}' dropped successfully."),

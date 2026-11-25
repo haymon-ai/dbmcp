@@ -4,6 +4,7 @@ use dbmcp_server::listing;
 use dbmcp_server::types::ListEntriesResponse;
 
 use super::prelude::*;
+use crate::queries;
 use crate::types::ListTriggersRequest;
 
 const NAME: &str = "listTriggers";
@@ -55,49 +56,6 @@ impl AsyncTool<SqliteHandler> for ListTriggersTool {
     }
 }
 
-/// Brief-mode SQL: name-only column with optional case-insensitive `LIKE` filter.
-///
-/// `SQLite`'s `LIKE` operator is case-insensitive for ASCII by default and
-/// `dbmcp` does not toggle the `case_sensitive_like` PRAGMA, so a bare
-/// `LIKE` already matches case-insensitively. (A `COLLATE NOCASE` clause on
-/// the right-hand pattern would be a no-op — `LIKE` does not honor RHS
-/// collation; see <https://www.sqlite.org/lang_expr.html>.) User-facing
-/// `LIKE` wildcards (`%`, `_`) in `?1` flow straight through.
-const BRIEF_SQL: &str = r"
-    SELECT name
-    FROM sqlite_schema
-    WHERE type = 'trigger'
-      AND name NOT LIKE 'sqlite_%'
-      AND (?1 IS NULL OR name LIKE '%' || ?1 || '%')
-    ORDER BY name
-    LIMIT ?2 OFFSET ?3";
-
-/// Detailed-mode SQL: single SELECT projecting `(name, json_object(...))`.
-///
-/// `'main'` is hard-coded in the projection — `sqlite_schema` here is the
-/// `main` schema's catalogue, the only one the connection helper opens.
-/// `AND sql IS NOT NULL` enforces the homogeneous-shape contract: rows whose
-/// stored `CREATE TRIGGER` text is `NULL` (extension-generated, hand-edited)
-/// are silently omitted from detailed pages. Brief mode does not filter on
-/// `sql` so those triggers are still discoverable by name. `SQLite` trigger
-/// names are unique within a database, so `ORDER BY name` is sufficient
-/// for stable pagination — no secondary tie-breaker needed.
-const DETAILED_SQL: &str = r"
-    SELECT
-        name,
-        json_object(
-            'schema',     'main',
-            'table',      tbl_name,
-            'definition', sql
-        ) AS entry
-    FROM sqlite_schema
-    WHERE type = 'trigger'
-      AND name NOT LIKE 'sqlite_%'
-      AND sql IS NOT NULL
-      AND (?1 IS NULL OR name LIKE '%' || ?1 || '%')
-    ORDER BY name
-    LIMIT ?2 OFFSET ?3";
-
 impl SqliteHandler {
     /// Lists one page of triggers in the connected database, optionally filtered and/or detailed.
     ///
@@ -117,28 +75,8 @@ impl SqliteHandler {
             self.config.page_size,
             search.as_deref(),
             detailed,
-            async |page, pattern| {
-                self.connection
-                    .fetch_scalar(
-                        sqlx::query(BRIEF_SQL)
-                            .bind(pattern)
-                            .bind(page.limit())
-                            .bind(page.offset()),
-                        None,
-                    )
-                    .await
-            },
-            async |page, pattern| {
-                self.connection
-                    .fetch(
-                        sqlx::query(DETAILED_SQL)
-                            .bind(pattern)
-                            .bind(page.limit())
-                            .bind(page.offset()),
-                        None,
-                    )
-                    .await
-            },
+            async |page, pattern| queries::triggers::names(&self.connection, page, pattern).await,
+            async |page, pattern| queries::triggers::details(&self.connection, page, pattern).await,
         )
         .await
         .map_err(Into::into)

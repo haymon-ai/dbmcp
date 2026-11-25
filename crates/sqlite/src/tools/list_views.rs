@@ -4,6 +4,7 @@ use dbmcp_server::listing;
 use dbmcp_server::types::ListEntriesResponse;
 
 use super::prelude::*;
+use crate::queries;
 use crate::types::ListViewsRequest;
 
 const NAME: &str = "listViews";
@@ -55,14 +56,6 @@ impl AsyncTool<SqliteHandler> for ListViewsTool {
     }
 }
 
-/// Lists one page of user view names, sorted by name.
-const SQL: &str = r"
-    SELECT name
-    FROM sqlite_schema
-    WHERE type = 'view' AND name NOT LIKE 'sqlite_%'
-    ORDER BY name
-    LIMIT ?1 OFFSET ?2";
-
 impl SqliteHandler {
     /// Lists one page of views in the connected database.
     ///
@@ -74,9 +67,7 @@ impl SqliteHandler {
         ListViewsRequest { cursor }: ListViewsRequest,
     ) -> Result<ListEntriesResponse, ErrorData> {
         let (views, next_cursor) = listing::paginate(cursor, self.config.page_size, async |page| {
-            self.connection
-                .fetch_scalar(sqlx::query(SQL).bind(page.limit()).bind(page.offset()), None)
-                .await
+            queries::views::names(&self.connection, page).await
         })
         .await?;
 

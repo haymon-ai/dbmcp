@@ -3,7 +3,7 @@
 use dbmcp_server::types::MessageResponse;
 
 use super::prelude::*;
-use crate::connection::quote_ident;
+use crate::queries;
 use crate::types::DropTableRequest;
 
 const NAME: &str = "dropTable";
@@ -87,12 +87,7 @@ impl PostgresHandler {
     ) -> Result<MessageResponse, ErrorData> {
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
-        let mut drop_sql = format!("DROP TABLE {}", quote_ident(&table));
-        if cascade {
-            drop_sql.push_str(" CASCADE");
-        }
-
-        self.connection.execute(drop_sql.as_str(), database).await?;
+        queries::tables::drop(&self.connection, &table, database, cascade).await?;
 
         Ok(MessageResponse {
             message: format!("Table '{table}' dropped successfully."),

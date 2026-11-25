@@ -7,6 +7,7 @@ use dbmcp_sql::validation::validate_single_statement;
 use dbmcp_truncate::{Window, fit};
 
 use super::prelude::*;
+use crate::queries;
 use crate::types::ExplainQueryRequest;
 use dbmcp_policy::Access;
 
@@ -80,7 +81,7 @@ impl SqliteHandler {
     ) -> Result<QueryResponse, ErrorData> {
         validate_single_statement(&query, &sqlparser::dialect::SQLiteDialect {})?;
 
-        let explain_sql = format!("EXPLAIN QUERY PLAN {query}");
+        let explain_sql = queries::explain::statement(&query);
 
         let caps = caps(self.config.max_cell_chars, self.config.max_response_chars);
         let mut window = Window::new(0, None, caps);

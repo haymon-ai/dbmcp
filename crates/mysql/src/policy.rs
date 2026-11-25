@@ -47,117 +47,23 @@ use serde_json::Value;
 use sqlparser::dialect::MySqlDialect;
 use sqlparser::tokenizer::{Token, Tokenizer};
 use sqlx::mysql::{MySqlColumn, MySqlDatabaseError, MySqlRow};
-use sqlx::{AssertSqlSafe, Column as _, ColumnOrigin, Row as _, SqlStr};
+use sqlx::{Column as _, ColumnOrigin, Row as _};
 use tracing::warn;
 
 use crate::MysqlHandler;
 use crate::connection::MysqlConnection;
 use crate::flavour::{self, BackendMismatch};
+use crate::queries;
+use crate::queries::policy::Match;
 
 /// Catalog name of every `MySQL` relation in rule keys (`TABLE_CATALOG`).
 const CATALOG: &str = "def";
-
-/// Reads the default database, `lower_case_table_names`, `sql_mode`, client charset, and server version.
-const PROBE_SQL: &str = "SELECT CAST(DATABASE() AS CHAR), \
-     CAST(@@lower_case_table_names AS SIGNED), CAST(@@sql_mode AS CHAR), \
-     CAST(@@character_set_client AS CHAR), CAST(VERSION() AS CHAR)";
 
 /// `sql_mode` flags under which the server lexes quotes or escapes unlike the parser.
 const LEXICAL_MODES: &[&str] = &["ANSI_QUOTES", "NO_BACKSLASH_ESCAPES"];
 
 /// Client charsets whose multibyte characters may end in a `\` byte, hiding an escape.
 const LEXICAL_CHARSETS: &[&str] = &["big5", "cp932", "gb18030", "gbk", "sjis"];
-
-/// Finds one written relation by its stored schema and name, compared exactly.
-///
-/// Text columns are cast: `MySQL` 9 reports `information_schema` text as
-/// `VARBINARY`, which `LOWER` leaves alone.
-///
-/// Lookups union one branch per name (no `OR`, no join with `COLUMNS` or
-/// `VIEWS`): both servers read `information_schema` fast only for constant
-/// schema and name.
-const TABLES_EXACT: &str = "(SELECT CAST(TABLE_SCHEMA AS CHAR), CAST(TABLE_NAME AS CHAR), \
-     CAST(TABLE_TYPE AS CHAR), CAST(ENGINE AS CHAR) FROM information_schema.TABLES \
-     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?)";
-
-/// Finds one written relation case-insensitively, both parts bound lowercased.
-///
-/// Scans every table on the server, so it is used only where an exact
-/// comparison would miss: `information_schema` names, and
-/// `lower_case_table_names = 2`, which stores names as written but
-/// compares them lowercased.
-const TABLES_FOLDED: &str = "(SELECT CAST(TABLE_SCHEMA AS CHAR), CAST(TABLE_NAME AS CHAR), \
-     CAST(TABLE_TYPE AS CHAR), CAST(ENGINE AS CHAR) FROM information_schema.TABLES \
-     WHERE LOWER(CAST(TABLE_SCHEMA AS CHAR)) = ? AND LOWER(CAST(TABLE_NAME AS CHAR)) = ?)";
-
-/// One relation's columns, bound with its exact schema and name.
-///
-/// Also each column's `COLUMN_DEFAULT` text (`NULL` when it has none; see
-/// [`has_default`]) and whether `GENERATION_EXPRESSION` is set.
-const COLUMNS_BRANCH: &str = "(SELECT CAST(TABLE_SCHEMA AS CHAR), CAST(TABLE_NAME AS CHAR), \
-     CAST(COLUMN_NAME AS CHAR), CAST(EXTRA AS CHAR), CAST(ORDINAL_POSITION AS SIGNED), \
-     CAST(NULL AS CHAR), CAST(COLUMN_DEFAULT AS CHAR), \
-     CAST(COALESCE(GENERATION_EXPRESSION, '') <> '' AS SIGNED), CAST(0 AS SIGNED) \
-     FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?)";
-
-/// One view's body, bound with its exact schema and name, shaped like [`COLUMNS_BRANCH`].
-const VIEW_BRANCH: &str = "(SELECT CAST(TABLE_SCHEMA AS CHAR), CAST(TABLE_NAME AS CHAR), \
-     CAST(NULL AS CHAR), CAST(NULL AS CHAR), CAST(0 AS SIGNED), \
-     CAST(VIEW_DEFINITION AS CHAR), CAST(NULL AS CHAR), CAST(0 AS SIGNED), CAST(0 AS SIGNED) \
-     FROM information_schema.VIEWS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?)";
-
-/// One relation's triggers, a row each, bound and shaped like [`COLUMNS_BRANCH`].
-///
-/// Without the `TRIGGER` privilege on the table the view lists none.
-const TRIGGERS_BRANCH: &str = "(SELECT CAST(EVENT_OBJECT_SCHEMA AS CHAR), CAST(EVENT_OBJECT_TABLE AS CHAR), \
-     CAST(NULL AS CHAR), CAST(NULL AS CHAR), CAST(0 AS SIGNED), \
-     CAST(NULL AS CHAR), CAST(NULL AS CHAR), CAST(0 AS SIGNED), CAST(1 AS SIGNED) \
-     FROM information_schema.TRIGGERS WHERE EVENT_OBJECT_SCHEMA = ? AND EVENT_OBJECT_TABLE = ?)";
-
-/// Walks the referential actions below the tables of [`ROOT`] branches.
-///
-/// Per edge: its root's schema and name as bound, the parent's schema,
-/// table, and column, the child's, the rule (`CASCADE`, `SET NULL`, `SET
-/// DEFAULT`; `InnoDB` rejects the last, read anyway), and whether a parent
-/// `DELETE` fires it. Below each reached child table come all its edges,
-/// the closure [`Relation::cascades`] asks for. `UNION` ends the walk on
-/// cycles. Names compare in the connection collation, which may over-match
-/// (fail closed).
-const CASCADES_HEAD: &str = "WITH RECURSIVE \
-     edge (ps, pt, pc, cs, ct, cc, rule, deletes) AS (SELECT CAST(k.REFERENCED_TABLE_SCHEMA AS CHAR), \
-           CAST(k.REFERENCED_TABLE_NAME AS CHAR), CAST(k.REFERENCED_COLUMN_NAME AS CHAR), \
-           CAST(k.TABLE_SCHEMA AS CHAR), CAST(k.TABLE_NAME AS CHAR), CAST(k.COLUMN_NAME AS CHAR), \
-           CAST(CASE d.deletes WHEN 1 THEN r.DELETE_RULE ELSE r.UPDATE_RULE END AS CHAR), d.deletes \
-         FROM information_schema.REFERENTIAL_CONSTRAINTS AS r \
-         JOIN information_schema.KEY_COLUMN_USAGE AS k ON k.CONSTRAINT_SCHEMA = r.CONSTRAINT_SCHEMA \
-           AND k.CONSTRAINT_NAME = r.CONSTRAINT_NAME AND k.TABLE_NAME = r.TABLE_NAME \
-         JOIN (SELECT 0 AS deletes UNION ALL SELECT 1) AS d \
-         WHERE k.REFERENCED_COLUMN_NAME IS NOT NULL), \
-     live AS (SELECT * FROM edge WHERE rule IN ('CASCADE', 'SET NULL', 'SET DEFAULT')), \
-     roots (rs, rt) AS (";
-
-/// One root table of [`CASCADES_HEAD`], bound with its exact schema and name.
-const ROOT: &str = "SELECT CAST(? AS CHAR), CAST(? AS CHAR)";
-
-/// Closes [`CASCADES_HEAD`] after its [`ROOT`] branches.
-const CASCADES_TAIL: &str = "), \
-     walk (rs, rt, ps, pt, pc, cs, ct, cc, rule, deletes) AS ( \
-       SELECT roots.rs, roots.rt, live.* FROM roots JOIN live ON live.ps = roots.rs AND live.pt = roots.rt \
-       UNION SELECT w.rs, w.rt, e.* FROM walk AS w JOIN live AS e ON e.ps = w.cs AND e.pt = w.ct) \
-     SELECT rs, rt, ps, pt, pc, cs, ct, cc, rule, CAST(deletes AS SIGNED) FROM walk";
-
-/// Orders the detail rows by relation, then column position.
-const DETAILS_ORDER: &str = " ORDER BY 1, 2, 5";
-
-/// One view's current body, bound with its exact schema and name.
-const VIEW_CURRENT: &str = "(SELECT CAST(TABLE_SCHEMA AS CHAR), CAST(TABLE_NAME AS CHAR), \
-     CAST(VIEW_DEFINITION AS CHAR) FROM information_schema.VIEWS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?)";
-
-/// Lists the schemas whose lowercased name is in the filter.
-const SCHEMAS_SQL: &str = "SELECT CAST(SCHEMA_NAME AS CHAR) FROM information_schema.SCHEMATA WHERE ";
-
-/// One schema filter of [`SCHEMAS_SQL`], bound lowercased.
-const SCHEMAS_ONE: &str = "LOWER(CAST(SCHEMA_NAME AS CHAR)) = ?";
 
 /// The only engine whose writes roll back.
 const TRANSACTIONAL_ENGINE: &str = "InnoDB";
@@ -219,8 +125,7 @@ impl Probe {
     /// [`Refusal::BackendMismatch`] when the server is not the configured
     /// `backend`, [`Stop::Sql`] when the probe query fails.
     async fn read(conn: &mut sqlx::MySqlConnection, backend: database::Backend) -> Result<Self, Stop> {
-        let (database, lower_case, sql_mode, charset, version): (Option<String>, i64, String, String, String) =
-            sqlx::query_as(PROBE_SQL).fetch_one(conn).await?;
+        let (database, lower_case, sql_mode, charset, version) = queries::policy::probe(conn).await?;
         let server = flavour::of(&version);
         if server != backend {
             return Err(Stop::Refused(Refusal::BackendMismatch(BackendMismatch {
@@ -292,11 +197,11 @@ impl Probe {
     /// Returns the `TABLES` branch for `lookup` and the schema and name to bind.
     ///
     /// [`Probe::same`] filters the rows.
-    fn branch(&self, lookup: &Lookup) -> (&'static str, String, String) {
+    fn branch(&self, lookup: &Lookup) -> (Match, String, String) {
         if self.lower_case == 2 || lookup.schema.eq_ignore_ascii_case("information_schema") {
-            (TABLES_FOLDED, lookup.schema.to_lowercase(), lookup.name.to_lowercase())
+            (Match::Folded, lookup.schema.to_lowercase(), lookup.name.to_lowercase())
         } else {
-            (TABLES_EXACT, self.created(&lookup.schema), self.created(&lookup.name))
+            (Match::Exact, self.created(&lookup.schema), self.created(&lookup.name))
         }
     }
 
@@ -318,36 +223,6 @@ struct Lookup {
     schema: String,
     name: String,
 }
-
-/// One row of [`TABLES_EXACT`] / [`TABLES_FOLDED`].
-type Table = (String, String, String, Option<String>);
-
-/// One row of the [`COLUMNS_BRANCH`] / [`VIEW_BRANCH`] / [`TRIGGERS_BRANCH`] union.
-type Detail = (
-    String,
-    String,
-    Option<String>,
-    Option<String>,
-    i64,
-    Option<String>,
-    Option<String>,
-    i64,
-    i64,
-);
-
-/// One edge of the [`CASCADES_HEAD`] walk.
-type Edge = (
-    String,
-    String,
-    String,
-    String,
-    String,
-    String,
-    String,
-    String,
-    String,
-    i64,
-);
 
 /// A relation found in `information_schema`, before it becomes a catalog entry.
 #[derive(Debug, Default)]
@@ -445,10 +320,6 @@ async fn run<'c>(
     access: Access,
     sink: &mut (impl FnMut(Value) + Send),
 ) -> Result<Run<'c>, Stop> {
-    let begin = match access {
-        Access::Read => "START TRANSACTION READ ONLY",
-        Access::Write => "START TRANSACTION",
-    };
     let (analyzed, probe, owners) = resolve(&mut *conn, backend, sql).await?;
     let mut planned = analyzed.plan(config)?;
     if !rolls_back(analyzed.statement(), analyzed.target(), &owners) {
@@ -457,10 +328,10 @@ async fn run<'c>(
     // The prune reads only format version 1 plans.
     let pins = backend == database::Backend::Mysql && planned.prunes();
     if pins {
-        explain_format(&mut *conn, "SET SESSION explain_json_format_version = 1").await?;
+        queries::policy::explain_format(&mut *conn, true).await?;
     }
     let ran = async {
-        let mut tx = sqlx::Connection::begin_with(&mut *conn, SqlStr::from_static(begin)).await?;
+        let mut tx = queries::policy::begin(&mut *conn, access).await?;
         let executed = async {
             let executed = execute(&mut tx, sql, &mut planned, &probe, &owners, sink).await?;
             // A statement that commits implicitly cannot be undone, and moves no rows.
@@ -475,7 +346,7 @@ async fn run<'c>(
         settle(Some(tx), access, planned, echoing, executed).await
     }
     .await;
-    if pins && let Err(error) = explain_format(&mut *conn, "SET SESSION explain_json_format_version = DEFAULT").await {
+    if pins && let Err(error) = queries::policy::explain_format(&mut *conn, false).await {
         // Only later unpruned plans on this connection see version 1; a dead one fails the pool's ping.
         warn!(%error, "EXPLAIN JSON format version not restored");
     }
@@ -535,12 +406,11 @@ async fn views_unchanged(
     if views.is_empty() {
         return Ok(true);
     }
-    let sql = vec![VIEW_CURRENT; views.len()].join(" UNION ALL ");
-    let mut query = sqlx::query_as::<_, (String, String, Option<String>)>(AssertSqlSafe(sql));
-    for (id, _) in &views {
-        query = query.bind(&id.schema).bind(&id.name);
-    }
-    let current = query.fetch_all(conn).await?;
+    let names: Vec<_> = views
+        .iter()
+        .map(|(id, _)| (id.schema.as_str(), id.name.as_str()))
+        .collect();
+    let current = queries::policy::view_bodies(conn, &names).await?;
     Ok(views.iter().all(|(id, body)| {
         current.iter().any(|(schema, name, current)| {
             *schema == id.schema && *name == id.name && current.as_deref().map(str::trim) == Some(*body)
@@ -658,19 +528,9 @@ async fn fetch(
     if lookups.is_empty() {
         return Ok(entries);
     }
-    let mut branches = Vec::new();
-    let mut binds = Vec::new();
-    for (_, lookup) in &lookups {
-        let (branch, schema, name) = probe.branch(lookup);
-        branches.push(branch);
-        binds.extend([schema, name]);
-    }
-    let mut query = sqlx::query_as::<_, Table>(AssertSqlSafe(branches.join(" UNION ALL ")));
-    for bind in binds {
-        query = query.bind(bind);
-    }
+    let branches: Vec<_> = lookups.iter().map(|(_, lookup)| probe.branch(lookup)).collect();
     let mut found: BTreeMap<(String, String), Found> = BTreeMap::new();
-    for (schema, name, kind, engine) in query.fetch_all(&mut *conn).await? {
+    for (schema, name, kind, engine) in queries::policy::tables(&mut *conn, &branches).await? {
         found.entry((schema, name)).or_insert_with(|| Found {
             kind,
             engine,
@@ -678,22 +538,12 @@ async fn fetch(
         });
     }
     if !found.is_empty() {
-        let mut branches = Vec::new();
-        let mut keys = Vec::new();
-        for (key, relation) in &found {
-            branches.extend([COLUMNS_BRANCH, TRIGGERS_BRANCH]);
-            keys.extend([key, key]);
-            if relation.kind == "VIEW" {
-                branches.push(VIEW_BRANCH);
-                keys.push(key);
-            }
-        }
-        let sql = format!("{}{DETAILS_ORDER}", branches.join(" UNION ALL "));
-        let mut details = sqlx::query_as::<_, Detail>(AssertSqlSafe(sql));
-        for (schema, name) in keys {
-            details = details.bind(schema.as_str()).bind(name.as_str());
-        }
-        for (schema, name, column, extra, _, body, default, generated, trigger) in details.fetch_all(&mut *conn).await?
+        let relations: Vec<_> = found
+            .iter()
+            .map(|((schema, name), relation)| (schema.as_str(), name.as_str(), relation.kind == "VIEW"))
+            .collect();
+        for (schema, name, column, extra, _, body, default, generated, trigger) in
+            queries::policy::details(&mut *conn, &relations).await?
         {
             let Some(relation) = found.get_mut(&(schema, name)) else {
                 continue;
@@ -755,17 +605,9 @@ async fn cascades(
     if roots.is_empty() {
         return Ok(());
     }
-    let sql = format!(
-        "{CASCADES_HEAD}{}{CASCADES_TAIL}",
-        vec![ROOT; roots.len()].join(" UNION ALL ")
-    );
-    let mut query = sqlx::query_as::<_, Edge>(AssertSqlSafe(sql));
-    for (schema, name) in &roots {
-        query = query.bind(schema.as_str()).bind(name.as_str());
-    }
     let column =
         |schema: &str, name: &str, column: String| SourceRef::new(RelationId::new(CATALOG, schema, name), column);
-    for (rs, rt, ps, pt, pc, cs, ct, cc, rule, deletes) in query.fetch_all(&mut *conn).await? {
+    for (rs, rt, ps, pt, pc, cs, ct, cc, rule, deletes) in queries::policy::cascades(&mut *conn, &roots).await? {
         let Some(relation) = found.get_mut(&(rs, rt)) else {
             continue;
         };
@@ -847,12 +689,8 @@ async fn vacant(
     if query.is_empty() {
         return Ok(entries);
     }
-    let filter = vec![SCHEMAS_ONE; query.len()].join(" OR ");
-    let mut schemas = sqlx::query_scalar::<_, String>(AssertSqlSafe(format!("{SCHEMAS_SQL}{filter}")));
-    for (_, lookup) in &query {
-        schemas = schemas.bind(lookup.schema.to_lowercase());
-    }
-    let schemas = schemas.fetch_all(&mut *conn).await?;
+    let lowered: Vec<_> = query.iter().map(|(_, lookup)| lookup.schema.to_lowercase()).collect();
+    let schemas = queries::policy::schemas(&mut *conn, &lowered).await?;
     for (name, lookup) in query {
         let schema = schemas.iter().find(|schema| probe.same(&lookup.schema, schema, schema));
         let entry = schema.map_or(Entry::Absent, |schema| {
@@ -861,27 +699,6 @@ async fn vacant(
         entries.push((name, entry));
     }
     Ok(entries)
-}
-
-/// Sets this session's `EXPLAIN FORMAT=JSON` version with the static `set`.
-///
-/// Version 2 (the `MySQL` 9.5+ default) carries the statement text, which the
-/// prune cannot read. `MySQL` before 8.3 has no such variable (error 1193)
-/// and only speaks version 1. `SET_VAR` cannot scope it to one statement.
-async fn explain_format(conn: &mut sqlx::MySqlConnection, set: &'static str) -> Result<(), Stop> {
-    match sqlx::query(set).execute(conn).await {
-        Ok(_) => Ok(()),
-        Err(error) if unknown_variable(&error) => Ok(()),
-        Err(error) => Err(Stop::Sql(error)),
-    }
-}
-
-/// Whether `error` is `ER_UNKNOWN_SYSTEM_VARIABLE` (1193).
-fn unknown_variable(error: &sqlx::Error) -> bool {
-    error
-        .as_database_error()
-        .and_then(|error| error.try_downcast_ref::<MySqlDatabaseError>())
-        .is_some_and(|error| error.number() == 1193)
 }
 
 /// Labels the error number and `SQLSTATE` of an error that may echo a value.
@@ -928,15 +745,15 @@ mod tests {
         assert!(probe(2).same("Users", "users", "app"));
         assert_eq!(probe(0).created("New"), "New");
         assert_eq!(probe(1).created("New"), "new");
-        assert_eq!(
+        assert!(matches!(
             probe(2)
                 .branch(&Lookup {
                     schema: "App".into(),
                     name: "T".into()
                 })
                 .0,
-            TABLES_FOLDED
-        );
+            Match::Folded
+        ));
     }
 
     #[test]

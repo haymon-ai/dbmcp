@@ -40,118 +40,12 @@ use dbmcp_types::{database, privacy};
 use rmcp::model::ErrorData;
 use serde_json::Value;
 use sqlx::postgres::{PgColumn, PgRow};
-use sqlx::{Column as _, FromRow as _, Row as _, SqlStr};
+use sqlx::{Column as _, Row as _};
 
 use crate::PostgresHandler;
-use crate::connection::{PostgresConnection, quote_ident};
-
-/// Reads the session state that decides how names resolve.
-///
-/// The database, `standard_conforming_strings`, the first existing schema
-/// of the search path, the search path itself, and the current user.
-const PROBE_SQL: &str = "SELECT current_database()::text, \
-     current_setting('standard_conforming_strings'), \
-     (current_schemas(false))[1]::text, \
-     current_setting('search_path'), current_user::text";
-
-/// Resolves each `to_regclass` input of `$1`, with its explicit schema in `$2`.
-///
-/// Per name, in order: schema, name, `relkind`, OID, view body, column names
-/// and numbers (system columns, numbered below zero, come last), whether
-/// the explicit schema exists, and its inheritance closure.
-///
-/// The closure is every descendant (`pg_inherits` children, transitively)
-/// and every ancestor of the relation or a descendant: each node's OID,
-/// schema, name, and `relkind`, then each `pg_inherits` edge whose child is
-/// a node, as child and parent OIDs. `UNION` ends the walk on diamonds. It
-/// takes no lock and names no `inhdetachpending`, so a partition pending
-/// detach still counts.
-///
-/// Last, per column, whether the server can fill it (a default, an
-/// identity, or a domain type with a default) and whether it is generated,
-/// each OR-ed over the relation and every descendant by column name: a
-/// row written through the relation may land in any of them.
-///
-/// Then whether the relation or a descendant has a user trigger (enabled
-/// or not) or a non-`SELECT` rule, and the referential actions below them:
-/// per edge, the parent's schema, table, and column, the child's, the
-/// action (`confupdtype` or `confdeltype`: `c`, `n`, `d`), whether a
-/// parent `DELETE` fires it, and whether the child has a user trigger or
-/// non-`SELECT` rule. Each foreign key's columns pair by position. The walk
-/// starts at every edge whose parent is the relation or a descendant; below
-/// each reached child table come all its edges, the closure
-/// [`Relation::cascades`] asks for. `UNION` ends it on cycles.
-const RESOLVE_SQL: &str = "SELECT s.nspname::text, c.relname::text, c.relkind::text, c.oid::int8, \
-     CASE WHEN c.relkind IN ('v', 'm') THEN pg_get_viewdef(c.oid) END, \
-     coalesce(cols.names, '{}'), coalesce(cols.numbers, '{}'), \
-     to_regnamespace(n.schema) IS NOT NULL, \
-     coalesce(tree.oids, '{}'), coalesce(tree.schemas, '{}'), coalesce(tree.names, '{}'), \
-     coalesce(tree.relkinds, '{}'), coalesce(tree.children, '{}'), coalesce(tree.parents, '{}'), \
-     coalesce(cols.defaults, '{}'), coalesce(cols.generated, '{}'), \
-     coalesce(fk.triggers, true), coalesce(fk.parent_schemas, '{}'), coalesce(fk.parent_names, '{}'), \
-     coalesce(fk.parent_columns, '{}'), coalesce(fk.child_schemas, '{}'), coalesce(fk.child_names, '{}'), \
-     coalesce(fk.child_columns, '{}'), coalesce(fk.actions, '{}'), coalesce(fk.deletes, '{}'), \
-     coalesce(fk.child_triggers, '{}') \
-     FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS n(name, schema, ord) \
-     LEFT JOIN pg_class AS c ON c.oid = to_regclass(n.name) \
-     LEFT JOIN pg_namespace AS s ON s.oid = c.relnamespace \
-     LEFT JOIN LATERAL (WITH RECURSIVE \
-           down(oid) AS (SELECT c.oid UNION SELECT i.inhrelid FROM pg_inherits AS i JOIN down ON i.inhparent = down.oid) \
-           SELECT array_agg(a.attname::text ORDER BY a.attnum < 0, a.attnum) AS names, \
-           array_agg(a.attnum ORDER BY a.attnum < 0, a.attnum) AS numbers, \
-           array_agg(f.fills ORDER BY a.attnum < 0, a.attnum) AS defaults, \
-           array_agg(f.generated ORDER BY a.attnum < 0, a.attnum) AS generated \
-           FROM pg_attribute AS a \
-           CROSS JOIN LATERAL (SELECT coalesce(bool_or(d.atthasdef OR d.attidentity <> '' \
-                 OR (t.typtype = 'd' AND t.typdefaultbin IS NOT NULL)), false) AS fills, \
-               coalesce(bool_or(d.attgenerated <> ''), false) AS generated \
-             FROM down JOIN pg_attribute AS d ON d.attrelid = down.oid AND d.attname = a.attname \
-               AND NOT d.attisdropped \
-             LEFT JOIN pg_type AS t ON t.oid = d.atttypid) AS f \
-           WHERE a.attrelid = c.oid AND a.attnum <> 0 AND NOT a.attisdropped) AS cols ON true \
-     LEFT JOIN LATERAL (WITH RECURSIVE \
-           down(oid) AS (SELECT c.oid UNION SELECT i.inhrelid FROM pg_inherits AS i JOIN down ON i.inhparent = down.oid), \
-           up(oid) AS (SELECT down.oid FROM down UNION SELECT i.inhparent FROM pg_inherits AS i JOIN up ON i.inhrelid = up.oid) \
-           SELECT nodes.oids, nodes.schemas, nodes.names, nodes.relkinds, edges.children, edges.parents \
-           FROM (SELECT array_agg(r.oid::int8 ORDER BY r.oid) AS oids, \
-                   array_agg(rs.nspname::text ORDER BY r.oid) AS schemas, \
-                   array_agg(r.relname::text ORDER BY r.oid) AS names, \
-                   array_agg(r.relkind::text ORDER BY r.oid) AS relkinds \
-                 FROM up JOIN pg_class AS r ON r.oid = up.oid \
-                 JOIN pg_namespace AS rs ON rs.oid = r.relnamespace) AS nodes, \
-                (SELECT array_agg(i.inhrelid::int8 ORDER BY i.inhrelid, i.inhparent) AS children, \
-                   array_agg(i.inhparent::int8 ORDER BY i.inhrelid, i.inhparent) AS parents \
-                 FROM pg_inherits AS i WHERE i.inhrelid IN (SELECT up.oid FROM up)) AS edges) AS tree ON true \
-     LEFT JOIN LATERAL (WITH RECURSIVE \
-           down(oid) AS (SELECT c.oid UNION SELECT i.inhrelid FROM pg_inherits AS i JOIN down ON i.inhparent = down.oid), \
-           edge(parent, pcol, child, ccol, action, deletes) AS (SELECT k.confrelid, k.confkey[p.i], k.conrelid, \
-                 k.conkey[p.i], CASE WHEN d.deletes THEN k.confdeltype ELSE k.confupdtype END, d.deletes \
-               FROM pg_constraint AS k \
-               CROSS JOIN LATERAL generate_subscripts(k.conkey, 1) AS p(i) \
-               CROSS JOIN (VALUES (false), (true)) AS d(deletes) \
-               WHERE k.contype = 'f' AND CASE WHEN d.deletes THEN k.confdeltype ELSE k.confupdtype END IN ('c', 'n', 'd')), \
-           walk AS (SELECT e.* FROM edge AS e WHERE e.parent IN (SELECT down.oid FROM down) \
-             UNION SELECT e.* FROM walk AS w JOIN edge AS e ON e.parent = w.child) \
-           SELECT EXISTS (SELECT FROM pg_trigger AS g WHERE g.tgrelid IN (SELECT down.oid FROM down) AND NOT g.tgisinternal) \
-               OR EXISTS (SELECT FROM pg_rewrite AS r WHERE r.ev_class IN (SELECT down.oid FROM down) AND r.ev_type <> '1') \
-               AS triggers, \
-             array_agg(ps.nspname::text ORDER BY w.parent, w.pcol, w.child, w.ccol, w.deletes) AS parent_schemas, \
-             array_agg(pc.relname::text ORDER BY w.parent, w.pcol, w.child, w.ccol, w.deletes) AS parent_names, \
-             array_agg(pa.attname::text ORDER BY w.parent, w.pcol, w.child, w.ccol, w.deletes) AS parent_columns, \
-             array_agg(cs.nspname::text ORDER BY w.parent, w.pcol, w.child, w.ccol, w.deletes) AS child_schemas, \
-             array_agg(cc.relname::text ORDER BY w.parent, w.pcol, w.child, w.ccol, w.deletes) AS child_names, \
-             array_agg(ca.attname::text ORDER BY w.parent, w.pcol, w.child, w.ccol, w.deletes) AS child_columns, \
-             array_agg(w.action::text ORDER BY w.parent, w.pcol, w.child, w.ccol, w.deletes) AS actions, \
-             array_agg(w.deletes ORDER BY w.parent, w.pcol, w.child, w.ccol, w.deletes) AS deletes, \
-             array_agg(EXISTS (SELECT FROM pg_trigger AS g WHERE g.tgrelid = w.child AND NOT g.tgisinternal) \
-                 OR EXISTS (SELECT FROM pg_rewrite AS r WHERE r.ev_class = w.child AND r.ev_type <> '1') \
-               ORDER BY w.parent, w.pcol, w.child, w.ccol, w.deletes) AS child_triggers \
-           FROM walk AS w \
-           JOIN pg_class AS pc ON pc.oid = w.parent JOIN pg_namespace AS ps ON ps.oid = pc.relnamespace \
-           JOIN pg_attribute AS pa ON pa.attrelid = w.parent AND pa.attnum = w.pcol \
-           JOIN pg_class AS cc ON cc.oid = w.child JOIN pg_namespace AS cs ON cs.oid = cc.relnamespace \
-           JOIN pg_attribute AS ca ON ca.attrelid = w.child AND ca.attnum = w.ccol) AS fk ON true \
-     ORDER BY n.ord";
+use crate::connection::PostgresConnection;
+use crate::queries;
+use crate::queries::policy::{Resolved, Writes};
 
 /// `SQLSTATE` codes whose messages name schema objects, states, or fixed limits, never values.
 ///
@@ -177,26 +71,6 @@ const VALUE_FREE_CODES: &[&str] = &[
     "42P20", "42P21", "42P22", "53000", "53100", "53200", "53300", "53400", "54001", "54011", "54023", "57000",
     "57014", "57P01", "57P02", "57P03", "57P04", "57P05",
 ];
-
-/// Re-reads the inheritance closure of each relation OID in `$1`, in order.
-///
-/// The same walk as [`RESOLVE_SQL`]: per OID, the schema and name of every
-/// descendant and every ancestor of the relation or a descendant, the
-/// relation itself included. A relation gone since is an empty closure.
-const FAMILY_SQL: &str = "SELECT coalesce(tree.schemas, '{}'), coalesce(tree.names, '{}') \
-     FROM unnest($1::int8[]) WITH ORDINALITY AS o(oid, ord) \
-     LEFT JOIN LATERAL (WITH RECURSIVE \
-           down(oid) AS (SELECT o.oid::oid UNION SELECT i.inhrelid FROM pg_inherits AS i JOIN down ON i.inhparent = down.oid), \
-           up(oid) AS (SELECT down.oid FROM down UNION SELECT i.inhparent FROM pg_inherits AS i JOIN up ON i.inhrelid = up.oid) \
-           SELECT array_agg(rs.nspname::text ORDER BY r.oid) AS schemas, \
-             array_agg(r.relname::text ORDER BY r.oid) AS names \
-           FROM up JOIN pg_class AS r ON r.oid = up.oid \
-           JOIN pg_namespace AS rs ON rs.oid = r.relnamespace) AS tree ON true \
-     ORDER BY o.ord";
-
-/// Reads the current body of each view OID in `$1`, in order.
-const VIEWS_SQL: &str = "SELECT pg_get_viewdef(v.oid::oid) \
-     FROM unnest($1::int8[]) WITH ORDINALITY AS v(oid, ord) ORDER BY v.ord";
 
 /// Schemas whose relations are system catalogs, never expanded as views.
 ///
@@ -243,48 +117,6 @@ struct Owner {
 /// The relations a statement's result columns may come from, by OID.
 type Owners = HashMap<u32, Owner>;
 
-/// Returns the quoted, qualified name `to_regclass` reads for `reference`.
-fn regclass(reference: &RelationRef) -> String {
-    match &reference.schema {
-        Some(schema) => format!("{}.{}", quote_ident(schema), quote_ident(&reference.name)),
-        None => quote_ident(&reference.name),
-    }
-}
-
-/// The write facts of one [`RESOLVE_SQL`] row, after its first 16 columns.
-type Writes = (
-    bool,
-    Vec<String>,
-    Vec<String>,
-    Vec<String>,
-    Vec<String>,
-    Vec<String>,
-    Vec<String>,
-    Vec<String>,
-    Vec<bool>,
-    Vec<bool>,
-);
-
-/// The first 16 columns of one [`RESOLVE_SQL`] row; [`Writes`] holds the rest.
-type Resolved = (
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<i64>,
-    Option<String>,
-    Vec<String>,
-    Vec<i16>,
-    bool,
-    Vec<i64>,
-    Vec<String>,
-    Vec<String>,
-    Vec<String>,
-    Vec<i64>,
-    Vec<i64>,
-    Vec<bool>,
-    Vec<bool>,
-);
-
 impl PostgresHandler {
     /// Plans `sql` under `policy`'s rules, runs it into `window`, and redacts the kept rows.
     ///
@@ -326,11 +158,7 @@ async fn run<'c>(
     access: Access,
     sink: &mut (impl FnMut(Value) + Send),
 ) -> Result<Run<'c>, Stop> {
-    let begin = match access {
-        Access::Read => "START TRANSACTION READ ONLY",
-        Access::Write => "BEGIN",
-    };
-    let mut tx = sqlx::Connection::begin_with(&mut *conn, SqlStr::from_static(begin)).await?;
+    let mut tx = queries::policy::begin(&mut *conn, access).await?;
     let (analyzed, owners) = resolve(&mut tx, sql).await?;
     let mut planned = analyzed.plan(config)?;
     if *analyzed.statement() == StatementKind::CreateIndex {
@@ -381,7 +209,7 @@ async fn views_unchanged(
     if oids.is_empty() {
         return Ok(true);
     }
-    let current: Vec<Option<String>> = sqlx::query_scalar(VIEWS_SQL).bind(oids).fetch_all(conn).await?;
+    let current = queries::policy::views(conn, oids).await?;
     Ok(current.iter().map(Option::as_deref).eq(bodies.into_iter().map(Some)))
 }
 
@@ -403,7 +231,7 @@ async fn families_unchanged(
     if oids.is_empty() {
         return Ok(true);
     }
-    let current: Vec<(Vec<String>, Vec<String>)> = sqlx::query_as(FAMILY_SQL).bind(oids).fetch_all(conn).await?;
+    let current = queries::policy::family(conn, oids).await?;
     Ok(trees.into_iter().zip(current).all(|(owner, (schemas, names))| {
         schemas
             .iter()
@@ -467,8 +295,7 @@ fn origins(columns: &[PgColumn], owners: &Owners) -> Result<Vec<(usize, Relation
 ///
 /// Also returns the relations it described, by OID.
 async fn resolve(conn: &mut sqlx::PgConnection, sql: &str) -> Result<(Analyzed, Owners), Stop> {
-    let (database, conforming, first, search_path, user): (String, String, Option<String>, String, String) =
-        sqlx::query_as(PROBE_SQL).fetch_one(&mut *conn).await?;
+    let (database, conforming, first, search_path, user) = queries::policy::probe(&mut *conn).await?;
     let probe = Probe {
         database,
         creation: first.filter(|first| !temp_first(&search_path, first, &user)),
@@ -522,20 +349,13 @@ async fn fetch(
     if names.is_empty() {
         return Ok(Vec::new());
     }
-    let regclasses: Vec<String> = names.iter().map(|(_, reference)| regclass(reference)).collect();
-    let schemas: Vec<Option<String>> = names
+    let references: Vec<(Option<&str>, &str)> = names
         .iter()
-        .map(|(_, reference)| reference.schema.as_deref().map(quote_ident))
+        .map(|(_, reference)| (reference.schema.as_deref(), reference.name.as_str()))
         .collect();
-    let rows: Vec<PgRow> = sqlx::query(RESOLVE_SQL)
-        .bind(regclasses)
-        .bind(schemas)
-        .fetch_all(&mut *conn)
-        .await?;
+    let rows = queries::policy::resolve(&mut *conn, &references).await?;
     let mut entries = Vec::new();
-    for ((name, reference), row) in names.into_iter().zip(rows) {
-        let writes = writes(&row)?;
-        let row = Resolved::from_row(&row)?;
+    for ((name, reference), (row, writes)) in names.into_iter().zip(rows) {
         let entry = entry(probe, &name, &reference, &row, writes);
         let (_, _, _, oid, body, names, numbers, ..) = row;
         if let (Entry::Resolved(relation), Some(oid)) = (&entry, oid.and_then(|oid| u32::try_from(oid).ok())) {
@@ -549,22 +369,6 @@ async fn fetch(
         entries.push((name, entry));
     }
     Ok(entries)
-}
-
-/// Reads the [`Writes`] columns of one [`RESOLVE_SQL`] row.
-fn writes(row: &PgRow) -> Result<Writes, sqlx::Error> {
-    Ok((
-        row.try_get(16)?,
-        row.try_get(17)?,
-        row.try_get(18)?,
-        row.try_get(19)?,
-        row.try_get(20)?,
-        row.try_get(21)?,
-        row.try_get(22)?,
-        row.try_get(23)?,
-        row.try_get(24)?,
-        row.try_get(25)?,
-    ))
 }
 
 /// Reads whether a relation has triggers, and its cascades, from `writes`.
@@ -806,13 +610,6 @@ mod tests {
         codes.sort_unstable();
         codes.dedup();
         assert_eq!(codes.len(), total, "duplicate code");
-    }
-
-    #[test]
-    fn regclass_quotes_each_part() {
-        assert_eq!(regclass(&reference(Some("public"), "Users")), "\"public\".\"Users\"");
-        assert_eq!(regclass(&reference(None, "users")), "\"users\"");
-        assert_eq!(regclass(&reference(None, "a\"b")), "\"a\"\"b\"");
     }
 
     #[test]
@@ -1114,6 +911,8 @@ mod tests {
 
     /// Tests against the seeded database; `#[ignore]`d outside `./tests/run.sh` and CI.
     mod db {
+        use sqlx::SqlStr;
+
         use super::*;
 
         /// Connects to the seeded `app` database that `./tests/run.sh` starts.
@@ -1318,9 +1117,7 @@ mod tests {
             sql: &str,
             change: &'static str,
         ) -> bool {
-            let mut tx = sqlx::Connection::begin_with(&mut *conn, SqlStr::from_static("START TRANSACTION READ ONLY"))
-                .await
-                .expect("begin");
+            let mut tx = queries::policy::begin(&mut *conn, Access::Read).await.expect("begin");
             let (analyzed, owners) = resolve(&mut tx, sql).await.expect("resolve");
             let mut planned = analyzed.plan(config).expect("plan");
             sqlx::raw_sql(SqlStr::from_static(change))

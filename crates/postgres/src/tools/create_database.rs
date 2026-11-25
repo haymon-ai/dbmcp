@@ -4,7 +4,7 @@ use dbmcp_server::types::{CreateDatabaseRequest, MessageResponse};
 use dbmcp_sql::SqlError;
 
 use super::prelude::*;
-use crate::connection::quote_ident;
+use crate::queries;
 
 const NAME: &str = "createDatabase";
 const TITLE: &str = "Create Database";
@@ -66,14 +66,15 @@ impl PostgresHandler {
         &self,
         CreateDatabaseRequest { database }: CreateDatabaseRequest,
     ) -> Result<MessageResponse, ErrorData> {
-        let create_sql = format!("CREATE DATABASE {}", quote_ident(&database));
-        self.connection.execute(create_sql.as_str(), None).await.map_err(|e| {
-            let msg = e.to_string();
-            if msg.contains("already exists") {
-                return SqlError::Query(format!("Database '{database}' already exists."));
-            }
-            e
-        })?;
+        queries::databases::create(&self.connection, &database)
+            .await
+            .map_err(|e| {
+                let msg = e.to_string();
+                if msg.contains("already exists") {
+                    return SqlError::Query(format!("Database '{database}' already exists."));
+                }
+                e
+            })?;
 
         Ok(MessageResponse {
             message: format!("Database '{database}' created successfully."),

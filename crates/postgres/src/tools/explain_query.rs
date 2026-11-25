@@ -8,6 +8,7 @@ use dbmcp_sql::validation::{validate_read, validate_single_statement};
 use dbmcp_truncate::{Window, fit};
 
 use super::prelude::*;
+use crate::queries;
 use dbmcp_policy::Access;
 
 const NAME: &str = "explainQuery";
@@ -100,11 +101,7 @@ impl PostgresHandler {
         let timeout = resolve_timeout(timeout, self.config.query_timeout, self.config.max_query_timeout)?;
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
-        let explain_sql = if analyze {
-            format!("EXPLAIN (ANALYZE, FORMAT JSON) {query}")
-        } else {
-            format!("EXPLAIN (FORMAT JSON) {query}")
-        };
+        let explain_sql = queries::explain::statement(&query, analyze);
 
         // ANALYZE executes the statement, and planning alone can run user functions.
         let caps = caps(self.config.max_cell_chars, self.config.max_response_chars);
