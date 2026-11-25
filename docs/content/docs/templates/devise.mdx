@@ -1,0 +1,84 @@
+---
+title: Devise (Rails)
+description: Privacy rules for Devise 4.9 and 5.0 on MySQL, MariaDB, PostgreSQL, and SQLite
+---
+
+Covers the e-mail addresses, password hash, tokens, and sign-in IPs on a Devise model's table, plus devise-two-factor secrets and Doorkeeper OAuth tokens.
+
+## Coverage
+
+- **Versions:** Devise 4.9 and 5.0; devise-two-factor 5.x–6.4; Doorkeeper 5.9.
+- **Engines:** MySQL, MariaDB, PostgreSQL, SQLite.
+- **Table prefix:** the template assumes unprefixed table names. Devise uses no prefix; the model name sets the table (`rails generate devise Admin` creates `admins`), so replace `users` if yours differs.
+
+## Template
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - users.email
+        - users.unconfirmed_email
+      entity: EMAIL_ADDRESS
+      operator: hash
+    ip-addresses:
+      columns:
+        - users.current_sign_in_ip
+        - users.last_sign_in_ip
+      entity: IP_ADDRESS
+      operator: hash
+    passwords:
+      columns:
+        - users.encrypted_password
+        # devise-two-factor (optional)
+        - users.otp_backup_codes
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - users.reset_password_token
+        - users.confirmation_token
+        - users.unlock_token
+        # devise-two-factor (optional)
+        - users.otp_secret
+        - users.encrypted_otp_secret
+        - users.encrypted_otp_secret_iv
+        - users.encrypted_otp_secret_salt
+        # Doorkeeper (optional)
+        - oauth_applications.secret
+        - oauth_access_grants.token
+        - oauth_access_grants.code_challenge
+        - oauth_access_tokens.token
+        - oauth_access_tokens.refresh_token
+        - oauth_access_tokens.previous_refresh_token
+      entity: API_KEY
+      operator: redact
+```
+
+**Choices**
+
+- `encrypted_password` is a bcrypt hash despite its name; `confirmation_token` is stored in plain, and anyone holding it can confirm the account.
+- `unconfirmed_email`, `confirmation_token`, `unlock_token`, and the IP columns exist only with `:confirmable`, `:lockable`, or `:trackable`.
+- Optional parts: delete the commented devise-two-factor and Doorkeeper columns if you do not run those gems. Installs upgraded from devise-two-factor 4.x keep the old `encrypted_otp_secret*` columns.
+- Doorkeeper stores tokens and client secrets in plain unless `hash_token_secrets` or `hash_application_secrets` is on; with the `plain` PKCE method, `code_challenge` is the verifier itself.
+- Each further Devise model has its own table with the same columns; add its columns, and profile columns such as `users.name`, to the matching rules.
+
+## Trade-offs
+
+- **Indexed ruled columns:** `users.email`, `users.reset_password_token`; `confirmation_token` and `unlock_token` if you enabled their indexes; Doorkeeper `oauth_access_grants.token`, `oauth_access_tokens.token`, `oauth_access_tokens.refresh_token`.
+- **Lookups that stop working:** finding a user by e-mail, IP address, or token.
+- **Join keys that stay unruled:** `id` and foreign keys, such as `users.id`, Doorkeeper's `resource_owner_id`, `application_id`, and `oauth_applications.uid`.
+
+## Not covered
+
+- `devise_invitable`, OmniAuth, `devise-security` columns: extension schemas not included.
+- `oauth_applications.name`, `redirect_uri`, `scopes`: app metadata, not personal data.
+- `activerecord-session_store` `sessions` table: optional gem, not included.
+
+## Sources
+
+- [heartcombo/devise@v5.0.4 `lib/generators/active_record/`](https://github.com/heartcombo/devise/tree/v5.0.4/lib/generators/active_record) and [`lib/devise/models/`](https://github.com/heartcombo/devise/tree/v5.0.4/lib/devise/models)
+- [heartcombo/devise@v4.9.4 `lib/generators/active_record/`](https://github.com/heartcombo/devise/tree/v4.9.4/lib/generators/active_record)
+- [devise-two-factor/devise-two-factor@v6.4.1](https://github.com/devise-two-factor/devise-two-factor/tree/v6.4.1) (generator, `README.md`, `UPGRADING.md`)
+- [doorkeeper-gem/doorkeeper@v5.9.10 `lib/generators/doorkeeper/templates/`](https://github.com/doorkeeper-gem/doorkeeper/tree/v5.9.10/lib/generators/doorkeeper/templates)

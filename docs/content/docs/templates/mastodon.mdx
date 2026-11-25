@@ -1,0 +1,153 @@
+---
+title: Mastodon
+description: Privacy rules for Mastodon 4.4 to 4.7 on PostgreSQL
+---
+
+Covers Mastodon users' e-mail and IP addresses, credentials, OAuth and push tokens, signing keys, moderation notes, public profiles, and post content.
+
+## Coverage
+
+- **Versions:** 4.4 to 4.7.
+- **Engines:** PostgreSQL.
+- **Table prefix:** the template assumes unprefixed table names. Mastodon uses no table prefix.
+
+## Template
+
+<Callout type="warn">
+Do not also paste the [Devise (Rails)](/templates/devise) template: both rule the same `users` columns (`email`, `encrypted_password`, tokens), so the two cannot be pasted together; a repeated column stops startup.
+</Callout>
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - users.email
+        - users.unconfirmed_email
+        - email_subscriptions.email
+        - canonical_email_blocks.canonical_email_hash
+        - fasp_providers.contact_email
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - identities.uid
+        - webauthn_credentials.nickname
+        # Public profiles (optional: published to every federated server)
+        - accounts.username
+        - accounts.display_name
+        - account_aliases.acct
+        - account_migrations.acct
+        - relationship_severance_events.target_name
+      entity: PERSON
+      operator: hash
+    ip-addresses:
+      columns:
+        - users.sign_up_ip
+        - login_activities.ip
+        - session_activations.ip
+        - oauth_access_tokens.last_used_ip
+        - ip_blocks.ip
+        - fasp_debug_callbacks.ip
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - account_moderation_notes.content
+        - report_notes.content
+        - instance_moderation_notes.content
+        - account_notes.comment
+        - account_warnings.text
+        - appeals.text
+        - reports.comment
+        - user_invite_requests.text
+        - invites.comment
+        - ip_blocks.comment
+        - domain_blocks.private_comment
+        # Post content (optional: statuses also holds direct messages)
+        - statuses.text
+        - statuses.spoiler_text
+        - status_edits.text
+        - status_edits.spoiler_text
+        - status_edits.media_descriptions
+        - status_edits.poll_options
+        - media_attachments.description
+        - polls.options
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - users.encrypted_password
+        - users.otp_backup_codes
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - users.otp_secret
+        - users.reset_password_token
+        - users.confirmation_token
+        - users.sign_in_token
+        - email_subscriptions.confirmation_token
+        - session_activations.session_id
+        - oauth_access_tokens.token
+        - oauth_access_tokens.refresh_token
+        - oauth_access_grants.token
+        - oauth_access_grants.code_challenge
+        - oauth_applications.secret
+        - web_push_subscriptions.endpoint
+        - web_push_subscriptions.key_auth
+        - web_push_subscriptions.key_p256dh
+        - webhooks.secret
+        - invites.code
+        - generated_annual_reports.share_key
+      entity: API_KEY
+      operator: redact
+    private-keys:
+      columns:
+        - accounts.private_key
+        - keypairs.private_key
+        - fasp_providers.server_private_key_pem
+      entity: PRIVATE_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - admin_action_logs.human_identifier
+        - admin_action_logs.recorded_changes
+        - accounts.fields
+        - bulk_import_rows.data
+        - scheduled_statuses.params
+        - generated_annual_reports.data
+        - fasp_debug_callbacks.request_body
+        - settings.value
+      entity: PERSON
+      operator: replace
+```
+
+**Choices**
+
+- `identities.uid` is the user's id at the SSO provider: a username or e-mail address.
+- `canonical_email_blocks.canonical_email_hash` is a guessable SHA-256 of an address; its token never equals the address's token.
+- `users.otp_backup_codes` holds backup-code digests (`passwords`); `users.otp_secret` is the TOTP seed (`secrets`).
+- `web_push_subscriptions.endpoint` is redacted: with `key_auth` it lets anyone push to the user's browser.
+- Optional parts: delete the commented profile and post columns you do not need and the `mixed-content` rules if the assistant needs those columns readable.
+
+## Trade-offs
+
+- **Indexed ruled columns:** `users.email`, `unconfirmed_email`, `confirmation_token`, `reset_password_token`; `canonical_email_blocks.canonical_email_hash`; `identities.uid`; `ip_blocks.ip`; `invites.code`; most token columns; `accounts.username`, `display_name` (public profiles).
+- **Lookups that stop working:** a user by e-mail, sign-ups by IP, matching `ip_blocks`, a token or invite code; with public profiles, an account by username.
+- **Join keys that stay unruled:** `id` and `<table>_id` columns, plus `users.account_id` and `oauth_access_tokens.resource_owner_id`.
+- **`user_ips` view:** filters and groups on ruled IPs, so it is refused; query `login_activities` and `session_activations` by `user_id`.
+
+## Not covered
+
+- `accounts.note`, `avatar_description`, `header_description`, account URLs (which contain the username): public federated data.
+- `login_activities.user_agent`, `session_activations.user_agent`: browser data, no matching data type.
+- `custom_filter_keywords.keyword`, `custom_filters.phrase`, `lists.title`, `collections`: user-chosen labels.
+- `email_domain_blocks.domain`, `username_blocks.username`, `domain_blocks.public_comment`: server policy.
+- Media files, backups, Elasticsearch or OpenSearch, Redis: outside PostgreSQL.
+
+## Sources
+
+- mastodon/mastodon `db/schema.rb` at [v4.7.6](https://github.com/mastodon/mastodon/blob/v4.7.6/db/schema.rb), [v4.6.12](https://github.com/mastodon/mastodon/blob/v4.6.12/db/schema.rb), [v4.5.22](https://github.com/mastodon/mastodon/blob/v4.5.22/db/schema.rb), and [v4.4.29](https://github.com/mastodon/mastodon/blob/v4.4.29/db/schema.rb)
+- [mastodon/mastodon `app/models/user.rb` at v4.7.6](https://github.com/mastodon/mastodon/blob/v4.7.6/app/models/user.rb)

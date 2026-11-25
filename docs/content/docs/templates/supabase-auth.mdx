@@ -1,0 +1,135 @@
+---
+title: Supabase Auth
+description: Privacy rules for Supabase Auth (GoTrue) up to v2.198.0 on PostgreSQL
+---
+
+Covers users, identities, sessions, audit-log IPs, MFA, one-time and OAuth flow tokens, SCIM users, passkeys, and SSO domains in the `auth` schema.
+
+## Coverage
+
+- **Versions:** v2 releases up to v2.198.0.
+- **Engines:** PostgreSQL.
+- **Table prefix:** the template assumes unprefixed table names. Supabase Auth uses no table prefix; its tables sit in the `auth` schema, written into every key.
+
+## Template
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - auth.users.email
+        - auth.users.email_change
+        - auth.identities.email
+        - auth.saml_relay_states.for_email
+        - auth.one_time_tokens.relates_to
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - auth.identities.provider_id
+        - auth.scim_users.user_name
+        - auth.scim_users.external_id
+        - auth.mfa_factors.friendly_name
+        - auth.webauthn_credentials.friendly_name
+        - auth.sessions.user_agent
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - auth.users.phone
+        - auth.users.phone_change
+        - auth.mfa_factors.phone
+      entity: PHONE_NUMBER
+      operator: hash
+    companies:
+      columns:
+        # SSO domains (optional)
+        - auth.sso_domains.domain
+      entity: ORGANIZATION
+      operator: hash
+    ip-addresses:
+      columns:
+        - auth.sessions.ip
+        - auth.audit_log_entries.ip_address
+        - auth.mfa_challenges.ip_address
+      entity: IP_ADDRESS
+      operator: hash
+    passwords:
+      columns:
+        - auth.users.encrypted_password
+        - auth.mfa_recovery_codes.code_hash
+        - auth.oauth_clients.client_secret_hash
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - auth.users.confirmation_token
+        - auth.users.recovery_token
+        - auth.users.email_change_token_new
+        - auth.users.email_change_token_current
+        - auth.users.phone_change_token
+        - auth.users.reauthentication_token
+        - auth.refresh_tokens.token
+        - auth.refresh_tokens.parent
+        - auth.sessions.refresh_token_hmac_key
+        - auth.mfa_factors.secret
+        - auth.mfa_challenges.otp_code
+        - auth.one_time_tokens.token_hash
+        - auth.one_time_tokens.link_token_hash
+        - auth.flow_state.auth_code
+        - auth.flow_state.code_challenge
+        - auth.flow_state.provider_access_token
+        - auth.flow_state.provider_refresh_token
+        - auth.flow_state.invite_token
+        - auth.oauth_authorizations.authorization_code
+        - auth.oauth_authorizations.code_challenge
+        - auth.oauth_client_states.code_verifier
+        - auth.custom_oauth_providers.client_secret
+        - auth.scim_tokens.token_hash
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - auth.users.raw_user_meta_data
+        - auth.users.raw_app_meta_data
+        - auth.identities.identity_data
+        - auth.audit_log_entries.payload
+        - auth.scim_users.resource
+        - auth.mfa_factors.web_authn_credential
+        - auth.mfa_factors.last_webauthn_challenge_data
+        - auth.mfa_challenges.web_authn_session_data
+        - auth.webauthn_challenges.session_data
+      entity: PERSON
+      operator: replace
+```
+
+**Choices**
+
+- Set `database.name` to the database holding `auth` (`postgres` on Supabase projects). For another schema (`GOTRUE_DB_NAMESPACE`), replace `auth.` in every key.
+- The `users` token columns and `one_time_tokens.token_hash` hold the hashed token e-mail and SMS links carry, a bearer credential. `one_time_tokens.relates_to` holds a lowercased e-mail or phone, ruled as `EMAIL_ADDRESS`.
+- `sessions.user_agent` and the `friendly_name` columns are hashed as `PERSON` ([#425](https://github.com/haymon-ai/dbmcp/issues/425)); `sso_domains.domain` names customer organizations, not people.
+- Optional parts: delete the commented SSO domain column if unneeded and the `mixed-content` rules if the assistant needs metadata and WebAuthn columns readable.
+
+## Trade-offs
+
+- **Indexed ruled columns:** `users.email`, `phone` and the `users` token columns; `refresh_tokens.token`, `parent`; `identities.email`, `provider_id`; `saml_relay_states.for_email`; `mfa_factors.friendly_name`, `phone`; `flow_state.auth_code`; `oauth_authorizations.authorization_code`; `scim_users.user_name`, `external_id`; `scim_tokens.token_hash`.
+- **Lookups that stop working:** a user by e-mail or phone, an identity by provider subject, a SCIM user by `userName`, sessions or audit entries by IP.
+- **Join keys that stay unruled:** `id` and `user_id` columns, plus `refresh_tokens.session_id` and `mfa_challenges.factor_id`. `audit_log_entries` has no user column; its actor sits in `payload`.
+- **Writes:** `writeQuery` refuses inserts into `users`, inserts and updates on `identities` and `scim_users` (defaulted and generated `hash`-ruled columns), and writes to tables with triggers; use the Auth API.
+
+## Not covered
+
+- `instances.raw_base_config`: legacy multi-instance configuration; add it to `secrets` if present.
+- `saml_providers`, `custom_oauth_providers`, `oauth_clients` metadata and URLs: identity-provider and client configuration.
+- `oauth_authorizations.state`, `nonce`: chosen by the OAuth client, short-lived.
+- `saml_relay_states.redirect_to`, `flow_state.referrer`: app URLs.
+- `sessions.tag`, `users.aud`, `role`: labels set by the app.
+- Schemas outside `auth` (`public`, `storage`, `realtime`): rule your own tables there.
+
+## Sources
+
+- [supabase/auth `migrations/` at v2.198.0](https://github.com/supabase/auth/tree/v2.198.0/migrations)
+- [supabase/auth `internal/models/one_time_token.go` at v2.198.0](https://github.com/supabase/auth/blob/v2.198.0/internal/models/one_time_token.go)
+- supabase/auth `migrations/` at [v2.187.0](https://github.com/supabase/auth/tree/v2.187.0/migrations), [v2.188.1](https://github.com/supabase/auth/tree/v2.188.1/migrations), [v2.196.0](https://github.com/supabase/auth/tree/v2.196.0/migrations), and [v2.197.0](https://github.com/supabase/auth/tree/v2.197.0/migrations)

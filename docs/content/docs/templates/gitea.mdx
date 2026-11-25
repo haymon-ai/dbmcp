@@ -1,0 +1,181 @@
+---
+title: Gitea / Forgejo
+description: Privacy rules for Gitea 1.27 to 28.4 and Forgejo 15 LTS to 17 on MySQL, MariaDB, PostgreSQL, and SQLite
+---
+
+Covers user and organization names, e-mail addresses, profiles, external logins, password hashes, 2FA secrets, and access, runner, session, webhook, and OAuth tokens.
+
+## Coverage
+
+- **Versions:** Gitea 1.27 to 28.4; Forgejo 15 LTS to 17.
+- **Engines:** MySQL, MariaDB, PostgreSQL, SQLite.
+- **Table prefix:** the template assumes unprefixed table names. Gitea and Forgejo use no table prefix.
+- **Forks:** one template for both; columns only one fork has sit under `# Gitea only` or `# Forgejo only`. On the other fork they match nothing.
+
+## Template
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - user.email
+        - user.avatar_email
+        - email_address.email
+        - email_address.lower_email
+        - email_hash.email
+        - email_hash.hash
+        - external_login_user.email
+        - team_invite.email
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - user.name
+        - user.lower_name
+        - user.full_name
+        - user.login_name
+        - user_redirect.lower_name
+        - repository.owner_name
+        - external_login_user.name
+        - external_login_user.first_name
+        - external_login_user.last_name
+        - external_login_user.nick_name
+        - issue.original_author
+        - comment.original_author
+        - release.original_author
+        - reaction.original_author
+        # Gitea only
+        - audit_event.actor_name
+        - audit_event.impersonator_name
+      entity: PERSON
+      operator: hash
+    addresses:
+      columns:
+        - user.location
+        - external_login_user.location
+      entity: LOCATION
+      operator: hash
+    urls:
+      columns:
+        - user.website
+        - user_open_id.uri
+        - external_login_user.avatar_url
+        # Forgejo only
+        - federated_user.normalized_original_url
+      entity: URL
+      operator: replace
+    ip-addresses:
+      columns:
+        # Gitea only
+        - audit_event.ip_address
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - user.description
+        - external_login_user.description
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - user.passwd
+        - user.salt
+        - two_factor.scratch_hash
+        - two_factor.scratch_salt
+        - oauth2_application.client_secret
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - user.rands
+        - access_token.token_hash
+        - access_token.token_salt
+        - access_token.token_last_eight
+        - two_factor.secret
+        - two_factor.last_used_passcode
+        - external_login_user.access_token
+        - external_login_user.access_token_secret
+        - external_login_user.refresh_token
+        - session.key
+        - oauth2_authorization_code.code
+        - oauth2_authorization_code.code_challenge
+        - team_invite.token
+        - webhook.secret
+        - webhook.header_authorization_encrypted
+        - secret.data
+        - action_runner.token_hash
+        - action_runner.token_salt
+        - action_runner_token.token
+        - action_task.token_hash
+        - action_task.token_salt
+        - action_task.token_last_eight
+        # Gitea only
+        - auth_token.token_hash
+        - deploy_key.token_hash
+        # Forgejo only
+        - forgejo_auth_token.hashed_validator
+        - mirror.encrypted_remote_address
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - user_setting.setting_value
+        - hook_task.payload_content
+        - hook_task.request_content
+        - hook_task.response_content
+        - public_key.content
+        - gpg_key.content
+        - gpg_key.emails
+        - gpg_key_import.content
+        # Gitea only
+        - audit_event.scope_name
+        - audit_event.message
+        - audit_event.metadata
+        # Forgejo only
+        - abuse_report_shadow_copy.raw_value
+        - forgejo_auth_token.purpose
+      entity: PERSON
+      operator: replace
+    # Keep: mixed-content columns that hold credentials.
+    mixed-content-secrets:
+      columns:
+        - login_source.cfg
+        - session.data
+        - external_login_user.raw_data
+        - webhook.url
+        - mirror.remote_address
+        - push_mirror.remote_address
+      entity: API_KEY
+      operator: redact
+```
+
+**Choices**
+
+- `user` holds organizations too (`type = 1`); their names and e-mail addresses share the users' rules.
+- `email_hash.hash` is an e-mail address's avatar hash, computable from a guessed address, so it is `EMAIL_ADDRESS`.
+- `original_author` on issues, comments, releases, and reactions holds usernames of authors migrated from GitHub, GitLab, and others.
+- `user.rands` seeds activation and reset codes; `oauth2_application.client_secret` is a bcrypt hash, so `PASSWORD_HASH`.
+- Optional parts: delete the fork-only columns you do not run and the `mixed-content` rules if the assistant needs those columns readable. `mixed-content-secrets` holds LDAP bind passwords and credential URLs.
+
+## Trade-offs
+
+- **Indexed ruled columns:** `user.name`, `lower_name`; `email_address.email`, `lower_email`; `email_hash.hash`; `user_redirect.lower_name`; `user_open_id.uri`; `session.key`; `team_invite.token`, `email`; `reaction.original_author`; every `token_hash` and `token_last_eight`; `oauth2_authorization_code.code`; `action_runner_token.token`.
+- **Lookups that stop working:** users or organizations by name or e-mail; `owner/repo` through `repository.owner_name`; renamed users through `user_redirect`; tokens by their last eight characters.
+- **Join keys that stay unruled:** `user.id`, referenced as `uid`, `user_id`, `owner_id`, and `poster_id`; `repository.lower_name` still finds repositories by name.
+- **Reserved words:** the assistant's SQL must quote `"user"` on PostgreSQL and the `key` of `session.key` with backticks on MySQL and MariaDB.
+
+## Not covered
+
+- Issue, comment, release, and repository text (`issue.content`, `comment.content`, `release.note`): repository content, not account data.
+- `external_login_user.external_id`: the join key to the identity provider.
+- `access_token.name`, `public_key.name`, `webauthn_credential.name`, `oauth2_application.name`: labels the user chooses.
+- `action_variable.data`: Actions variables are not meant for secrets.
+- Commit authors, LFS objects, attachments, avatars: in git repositories and on disk.
+
+## Sources
+
+- [go-gitea/gitea `models/` at v28.4.0](https://github.com/go-gitea/gitea/tree/v28.4.0/models), with [`modelmigration/migrations.go`](https://github.com/go-gitea/gitea/blob/v28.4.0/modelmigration/migrations.go) and [`models/fixtures/`](https://github.com/go-gitea/gitea/tree/v28.4.0/models/fixtures)
+- [go-gitea/gitea `models/` at v1.27.3](https://github.com/go-gitea/gitea/tree/v1.27.3/models)
+- [forgejo/forgejo `models/` at v17.0.2](https://codeberg.org/forgejo/forgejo/src/tag/v17.0.2/models) and [v15.0.12](https://codeberg.org/forgejo/forgejo/src/tag/v15.0.12/models)

@@ -1,0 +1,166 @@
+---
+title: Drupal
+description: Privacy rules for Drupal 8.9 to 11 and Drupal Commerce 2 and 3 on MySQL, MariaDB, PostgreSQL, and SQLite
+---
+
+Covers accounts, comment authors, log and session IPs, and flood records in Drupal core, plus optional Drupal Commerce orders and customer profiles.
+
+## Coverage
+
+- **Versions:** Drupal core 8.9 to 11.x; Commerce 2.x and 3.x, Address 1.x and 2.x, Profile 1.x.
+- **Engines:** MySQL, MariaDB, PostgreSQL, SQLite.
+- **Table prefix:** the template assumes unprefixed table names. Drupal has none unless `$databases` sets `prefix` in `settings.php`; prepend it to every key. On SQLite, point <Dbmcp /> at the `<database>-<prefix>` file instead.
+
+## Template
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - users_field_data.mail
+        - users_field_data.init
+        - comment_field_data.mail
+        # Drupal Commerce (optional)
+        - commerce_order.mail
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - users_field_data.name
+        - comment_field_data.name
+        - comment_entity_statistics.last_comment_name
+        # Drupal Commerce (optional)
+        - profile__address.address_given_name
+        - profile__address.address_additional_name
+        - profile__address.address_family_name
+        - profile_revision__address.address_given_name
+        - profile_revision__address.address_additional_name
+        - profile_revision__address.address_family_name
+      entity: PERSON
+      operator: hash
+    addresses:
+      columns:
+        # Drupal Commerce (optional)
+        - profile__address.address_address_line1
+        - profile__address.address_address_line2
+        - profile__address.address_address_line3  # Address 2.0+
+        - profile__address.address_locality
+        - profile__address.address_dependent_locality
+        - profile_revision__address.address_address_line1
+        - profile_revision__address.address_address_line2
+        - profile_revision__address.address_address_line3  # Address 2.0+
+        - profile_revision__address.address_locality
+        - profile_revision__address.address_dependent_locality
+      entity: LOCATION
+      operator: hash
+    postcodes:
+      columns:
+        # Drupal Commerce (optional)
+        - profile__address.address_postal_code
+        - profile_revision__address.address_postal_code
+      entity: POSTCODE
+      operator: hash
+    companies:
+      columns:
+        # Drupal Commerce (optional)
+        - profile__address.address_organization
+        - profile_revision__address.address_organization
+      entity: ORGANIZATION
+      operator: hash
+    tax-ids:
+      columns:
+        # Drupal Commerce (optional)
+        - profile__tax_number.tax_number_value
+        - profile_revision__tax_number.tax_number_value
+      entity: VAT_NUMBER
+      operator: hash
+    urls:
+      columns:
+        - comment_field_data.homepage
+        - watchdog.location
+        - watchdog.referer
+      entity: URL
+      operator: replace
+    ip-addresses:
+      columns:
+        - comment_field_data.hostname
+        - watchdog.hostname
+        - sessions.hostname
+        - flood.identifier
+        - ban_ip.ip
+        # Drupal Commerce (optional)
+        - commerce_order.ip_address
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        # Drupal Commerce (optional)
+        - commerce_order.customer_comments
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - users_field_data.pass
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - sessions.sid
+        # Drupal Commerce (optional)
+        - commerce_payment_method.remote_id
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - users_data.value
+        - sessions.session
+        - watchdog.message
+        - watchdog.variables
+        - key_value_expire.value
+        - queue.data
+        - cache_entity.data
+        - cache_render.data
+        - cache_page.data
+        - cache_dynamic_page_cache.data
+        - cache_data.data
+        # Drupal Commerce (optional)
+        - commerce_order.data
+        - profile.data
+        - commerce_log.params
+        - profile__tax_number.tax_number_verification_result
+        - profile_revision__tax_number.tax_number_verification_result
+      entity: PERSON
+      operator: replace
+```
+
+**Choices**
+
+- `watchdog.location` and `referer` are full URLs, which carry one-time login links (`/user/reset/…`). `users_field_data.init` is the e-mail address the account was created with.
+- `flood.identifier` holds the IP or `<uid>-<ip>`; the combined form gets another token than the plain IP.
+- `commerce_payment_method.remote_id` is the gateway's reusable token for a stored card or account, so it sits in `secrets`.
+- Optional parts: delete the Drupal Commerce columns if you do not run it, and the `mixed-content` rule to keep those columns readable.
+- Your own fields live in `<entity_type>__<field_name>` (and `_revision__`), columns `<field_name>_<property>`; add each to the rule for its data type.
+
+## Trade-offs
+
+- **Indexed ruled columns:** `users_field_data.name`, `users_field_data.mail`, `sessions.sid`, `flood.identifier`, `ban_ip.ip`.
+- **Lookups that stop working:** users by name or e-mail, orders by e-mail or IP, log and flood entries grouped by IP.
+- **Join keys that stay unruled:** ids, such as `uid`, `commerce_order.billing_profile__target_id`, and the field tables' `entity_id`.
+
+## Not covered
+
+- `comment__comment_body.comment_body_value`, `node__body.body_value`: published free text, not account data.
+- Contact form messages: core does not store them; Contact Storage tables not mapped.
+- `file_managed.filename`, `uri`: uploaded file names.
+- `commerce_payment.remote_id`, `user__commerce_remote_id`: gateway ids, not secrets.
+- `commerce_store_field_data.mail`, the store's `address__*` columns: the shop's own data.
+- `search_index`, `search_dataset`: indexed page text.
+
+## Sources
+
+- Drupal core [11.4.13](https://github.com/drupal/drupal/tree/11.4.13/core) and [8.9.20](https://github.com/drupal/drupal/tree/8.9.20/core)
+- Drupal Commerce [3.3.14](https://git.drupalcode.org/project/commerce/-/tree/3.3.14) and [8.x-2.41](https://git.drupalcode.org/project/commerce/-/tree/8.x-2.41)
+- Address [2.0.6](https://git.drupalcode.org/project/address/-/tree/2.0.6) and [8.x-1.12](https://git.drupalcode.org/project/address/-/tree/8.x-1.12)
+- Profile [8.x-1.17](https://git.drupalcode.org/project/profile/-/tree/8.x-1.17)

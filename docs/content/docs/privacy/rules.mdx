@@ -296,7 +296,7 @@ Policy refusals, timeouts, and connection errors are returned as they are. Other
 Column rules narrow what the assistant can learn, but some channels stay open. Plan for them:
 
 - **Rules that match nothing.** A key with a typo or the wrong segments (see [Column keys](#column-keys)) silently has no effect.
-- **Unlisted columns.** Columns without a rule rely on global detection, which catches patterns such as e-mail addresses and IBANs but not names or street addresses (those need [Machine Learning](/privacy/machine-learning)). Rule every column that holds sensitive data.
+- **Unlisted columns.** Columns without a rule rely on global detection, which catches patterns such as e-mail addresses and IBANs but not names or street addresses (those need [Machine Learning](/privacy/machine-learning)). Rule every column that holds sensitive data. [Templates](/templates) list the columns of popular applications.
 - **Timing.** How long a query runs can depend on ruled values. Response times are not padded.
 - **Errors as an oracle.** Whether a statement fails can depend on a value: `SELECT CASE WHEN ssn LIKE '1%' THEN 1/0 END FROM users` fails exactly when the condition holds, and `SELECT 1/(ascii(ssn) - 49) FROM users` fails exactly when `ssn` starts with `1`, with no condition at all. Withholding the message does not hide that an error happened. A `LIMIT` on an unruled column turns this into a row locator: the statement fails only when the matching row is among the first rows, so a search over the limit finds the row.
 - **Plan estimates.** Pruned plans keep row and cost estimates, which derive from statistics of ruled columns; see [Plans of ruled tables](#plans-of-ruled-tables).

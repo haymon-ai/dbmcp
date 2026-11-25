@@ -1,0 +1,860 @@
+---
+title: Magento
+description: Privacy rules for Magento Open Source and Adobe Commerce 2.4.7 to 2.4.9 on MySQL and MariaDB
+---
+
+Covers customer, address, cart, order, admin-grid, newsletter, review, admin-user, token, and IP-log columns of Magento Open Source and the Adobe Commerce core.
+
+## Coverage
+
+- **Versions:** 2.4.7 to 2.4.9.
+- **Engines:** MySQL, MariaDB.
+- **Table prefix:** the template assumes unprefixed table names. Magento has no prefix unless one was set at install (`db.table_prefix` in `app/etc/env.php`); prepend it to every key.
+
+## Template
+
+<Tabs groupId="magento-version" persist items={['2.4.7', '2.4.8', '2.4.9']} defaultIndex={2}>
+<Tab value="2.4.7">
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - customer_entity.email
+        - customer_grid_flat.email
+        - quote.customer_email
+        - quote_address.email
+        - sales_order.customer_email
+        - sales_order_address.email
+        - sales_order_grid.customer_email
+        - sales_invoice_grid.customer_email
+        - sales_shipment_grid.customer_email
+        - sales_creditmemo_grid.customer_email
+        - newsletter_subscriber.subscriber_email
+        - admin_user.email
+        - integration.email
+        - magento_login_as_customer_log.customer_email
+        - password_reset_request_event.account_reference
+        # Dotdigital (optional)
+        - email_contact.email
+        - email_campaign.email
+        - email_automation.email
+        - email_abandoned_cart.email
+        - email_coupon_attribute.email
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - customer_entity.firstname
+        - customer_entity.middlename
+        - customer_entity.lastname
+        - customer_address_entity.firstname
+        - customer_address_entity.middlename
+        - customer_address_entity.lastname
+        - customer_grid_flat.name
+        - customer_grid_flat.billing_firstname
+        - customer_grid_flat.billing_lastname
+        - quote.customer_firstname
+        - quote.customer_middlename
+        - quote.customer_lastname
+        - quote_address.firstname
+        - quote_address.middlename
+        - quote_address.lastname
+        - quote_payment.cc_owner
+        - quote_payment.cc_ss_owner
+        - sales_order.customer_firstname
+        - sales_order.customer_middlename
+        - sales_order.customer_lastname
+        - sales_order_address.firstname
+        - sales_order_address.middlename
+        - sales_order_address.lastname
+        - sales_order_grid.customer_name
+        - sales_order_grid.billing_name
+        - sales_order_grid.shipping_name
+        - sales_invoice_grid.customer_name
+        - sales_invoice_grid.billing_name
+        - sales_shipment_grid.customer_name
+        - sales_shipment_grid.billing_name
+        - sales_shipment_grid.shipping_name
+        - sales_creditmemo_grid.customer_name
+        - sales_creditmemo_grid.billing_name
+        - sales_order_payment.cc_owner
+        - sales_order_payment.echeck_account_name
+        - gift_message.sender
+        - gift_message.recipient
+        - review_detail.nickname
+        - admin_user.firstname
+        - admin_user.lastname
+        - admin_user.username
+        - magento_login_as_customer_log.user_name
+        - oauth_token_request_log.user_name
+        - paypal_settlement_report_row.consumer_id
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - customer_address_entity.telephone
+        - customer_address_entity.fax
+        - customer_grid_flat.billing_telephone
+        - customer_grid_flat.billing_fax
+        - quote_address.telephone
+        - quote_address.fax
+        - sales_order_address.telephone
+        - sales_order_address.fax
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - customer_address_entity.street
+        - customer_address_entity.city
+        - customer_grid_flat.billing_full
+        - customer_grid_flat.shipping_full
+        - customer_grid_flat.billing_street
+        - customer_grid_flat.billing_city
+        - quote_address.street
+        - quote_address.city
+        - sales_order_address.street
+        - sales_order_address.city
+        - sales_order_grid.billing_address
+        - sales_order_grid.shipping_address
+        - sales_invoice_grid.billing_address
+        - sales_invoice_grid.shipping_address
+        - sales_shipment_grid.billing_address
+        - sales_shipment_grid.shipping_address
+        - sales_creditmemo_grid.billing_address
+        - sales_creditmemo_grid.shipping_address
+        - sales_shipment.shipping_label
+      entity: LOCATION
+      operator: hash
+    postcodes:
+      columns:
+        - customer_address_entity.postcode
+        - customer_grid_flat.billing_postcode
+        - quote_address.postcode
+        - sales_order_address.postcode
+      entity: POSTCODE
+      operator: hash
+    companies:
+      columns:
+        - customer_address_entity.company
+        - customer_grid_flat.billing_company
+        - quote_address.company
+        - sales_order_address.company
+      entity: ORGANIZATION
+      operator: hash
+    tax-ids:
+      columns:
+        - customer_entity.taxvat
+        - customer_address_entity.vat_id
+        - customer_grid_flat.taxvat
+        - customer_grid_flat.billing_vat_id
+        - quote.customer_taxvat
+        - quote_address.vat_id
+        - quote_address.validated_vat_number
+        - sales_order.customer_taxvat
+        - sales_order_address.vat_id
+      entity: VAT_NUMBER
+      operator: hash
+    cards:
+      columns:
+        - quote_payment.cc_number_enc
+        - quote_payment.cc_last_4
+        - sales_order_payment.cc_number_enc
+        - sales_order_payment.cc_last_4
+      entity: CREDIT_CARD
+      operator: redact
+    card-codes:
+      columns:
+        - quote_payment.cc_cid_enc
+      entity: CVV
+      operator: redact
+    routing-numbers:
+      columns:
+        - sales_order_payment.echeck_routing_number
+      entity: ROUTING_NUMBER_US
+      operator: redact
+    birth-dates:
+      columns:
+        - customer_entity.dob
+        - customer_grid_flat.dob
+        - quote.customer_dob
+        - sales_order.customer_dob
+      entity: DATE_OF_BIRTH
+      operator: replace
+    ip-addresses:
+      columns:
+        - quote.remote_ip
+        - sales_order.remote_ip
+        - sales_order.x_forwarded_for
+        - rating_option_vote.remote_ip
+        - rating_option_vote.remote_ip_long
+        - sendfriend_log.ip
+        - admin_user_session.ip
+        - password_reset_request_event.ip
+        # Dotdigital (optional)
+        - email_contact_consent.consent_ip
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - quote.customer_note
+        - quote_address.customer_notes
+        - sales_order.customer_note
+        - sales_order_status_history.comment
+        - sales_invoice.customer_note
+        - sales_invoice_comment.comment
+        - sales_shipment.customer_note
+        - sales_shipment_comment.comment
+        - sales_creditmemo.customer_note
+        - sales_creditmemo_comment.comment
+        - gift_message.message
+        # Review text (optional)
+        - review_detail.title
+        - review_detail.detail
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - customer_entity.password_hash
+        - quote.password_hash
+        - admin_user.password
+        - admin_passwords.password_hash
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - customer_entity.rp_token
+        - customer_entity.confirmation
+        - customer_grid_flat.confirmation
+        - admin_user.rp_token
+        - newsletter_subscriber.subscriber_confirm_code
+        - oauth_consumer.key
+        - oauth_consumer.secret
+        - oauth_token.token
+        - oauth_token.secret
+        - oauth_token.verifier
+        - login_as_customer.secret
+        - persistent_session.key
+        - sales_order.protect_code
+        - quote_id_mask.masked_id
+        - wishlist.sharing_code
+        - downloadable_link_purchased_item.link_hash
+        - vault_payment_token.gateway_token
+        - paypal_billing_agreement.reference_id
+        # Two-factor authentication (optional)
+        - tfa_user_config.encoded_config
+        # Dotdigital (optional)
+        - admin_user.refresh_token
+      entity: API_KEY
+      operator: redact
+    private-keys:
+      columns:
+        - paypal_cert.content
+      entity: PRIVATE_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - customer_entity_varchar.value
+        - customer_entity_text.value
+        - customer_address_entity_varchar.value
+        - customer_address_entity_text.value
+        - quote_payment.additional_information
+        - quote_payment.additional_data
+        - sales_order_payment.additional_information
+        - sales_order_payment.additional_data
+        - sales_payment_transaction.additional_information
+        - paypal_payment_transaction.additional_information
+        - vault_payment_token.details
+        - quote_item_option.value
+        - sales_order_item.product_options
+        - persistent_session.info
+        - admin_user.extra
+        - captcha_log.value
+        - authorization_role.role_name
+        - queue_message.body
+        - magento_operation.serialized_data
+        - magento_operation.result_serialized_data
+        - importexport_importdata.data
+        # Dotdigital (optional)
+        - email_importer.import_data
+      entity: PERSON
+      operator: replace
+```
+
+</Tab>
+<Tab value="2.4.8">
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - customer_entity.email
+        - customer_grid_flat.email
+        - quote.customer_email
+        - quote_address.email
+        - sales_order.customer_email
+        - sales_order_address.email
+        - sales_order_grid.customer_email
+        - sales_invoice_grid.customer_email
+        - sales_shipment_grid.customer_email
+        - sales_creditmemo_grid.customer_email
+        - newsletter_subscriber.subscriber_email
+        - admin_user.email
+        - integration.email
+        - magento_login_as_customer_log.customer_email
+        - password_reset_request_event.account_reference
+        # Dotdigital (optional)
+        - email_contact.email
+        - email_campaign.email
+        - email_automation.email
+        - email_abandoned_cart.email
+        - email_coupon_attribute.email
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - customer_entity.firstname
+        - customer_entity.middlename
+        - customer_entity.lastname
+        - customer_address_entity.firstname
+        - customer_address_entity.middlename
+        - customer_address_entity.lastname
+        - customer_grid_flat.name
+        - customer_grid_flat.billing_firstname
+        - customer_grid_flat.billing_lastname
+        - quote.customer_firstname
+        - quote.customer_middlename
+        - quote.customer_lastname
+        - quote_address.firstname
+        - quote_address.middlename
+        - quote_address.lastname
+        - quote_payment.cc_owner
+        - quote_payment.cc_ss_owner
+        - sales_order.customer_firstname
+        - sales_order.customer_middlename
+        - sales_order.customer_lastname
+        - sales_order_address.firstname
+        - sales_order_address.middlename
+        - sales_order_address.lastname
+        - sales_order_grid.customer_name
+        - sales_order_grid.billing_name
+        - sales_order_grid.shipping_name
+        - sales_invoice_grid.customer_name
+        - sales_invoice_grid.billing_name
+        - sales_shipment_grid.customer_name
+        - sales_shipment_grid.billing_name
+        - sales_shipment_grid.shipping_name
+        - sales_creditmemo_grid.customer_name
+        - sales_creditmemo_grid.billing_name
+        - sales_order_payment.cc_owner
+        - sales_order_payment.echeck_account_name
+        - gift_message.sender
+        - gift_message.recipient
+        - review_detail.nickname
+        - admin_user.firstname
+        - admin_user.lastname
+        - admin_user.username
+        - magento_login_as_customer_log.user_name
+        - oauth_token_request_log.user_name
+        - paypal_settlement_report_row.consumer_id
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - customer_address_entity.telephone
+        - customer_address_entity.fax
+        - customer_grid_flat.billing_telephone
+        - customer_grid_flat.billing_fax
+        - quote_address.telephone
+        - quote_address.fax
+        - sales_order_address.telephone
+        - sales_order_address.fax
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - customer_address_entity.street
+        - customer_address_entity.city
+        - customer_grid_flat.billing_full
+        - customer_grid_flat.shipping_full
+        - customer_grid_flat.billing_street
+        - customer_grid_flat.billing_city
+        - quote_address.street
+        - quote_address.city
+        - sales_order_address.street
+        - sales_order_address.city
+        - sales_order_grid.billing_address
+        - sales_order_grid.shipping_address
+        - sales_invoice_grid.billing_address
+        - sales_invoice_grid.shipping_address
+        - sales_shipment_grid.billing_address
+        - sales_shipment_grid.shipping_address
+        - sales_creditmemo_grid.billing_address
+        - sales_creditmemo_grid.shipping_address
+        - sales_shipment.shipping_label
+      entity: LOCATION
+      operator: hash
+    postcodes:
+      columns:
+        - customer_address_entity.postcode
+        - customer_grid_flat.billing_postcode
+        - quote_address.postcode
+        - sales_order_address.postcode
+      entity: POSTCODE
+      operator: hash
+    companies:
+      columns:
+        - customer_address_entity.company
+        - customer_grid_flat.billing_company
+        - quote_address.company
+        - sales_order_address.company
+      entity: ORGANIZATION
+      operator: hash
+    tax-ids:
+      columns:
+        - customer_entity.taxvat
+        - customer_address_entity.vat_id
+        - customer_grid_flat.taxvat
+        - customer_grid_flat.billing_vat_id
+        - quote.customer_taxvat
+        - quote_address.vat_id
+        - quote_address.validated_vat_number
+        - sales_order.customer_taxvat
+        - sales_order_address.vat_id
+      entity: VAT_NUMBER
+      operator: hash
+    cards:
+      columns:
+        - quote_payment.cc_number_enc
+        - quote_payment.cc_last_4
+        - sales_order_payment.cc_number_enc
+        - sales_order_payment.cc_last_4
+      entity: CREDIT_CARD
+      operator: redact
+    card-codes:
+      columns:
+        - quote_payment.cc_cid_enc
+      entity: CVV
+      operator: redact
+    routing-numbers:
+      columns:
+        - sales_order_payment.echeck_routing_number
+      entity: ROUTING_NUMBER_US
+      operator: redact
+    birth-dates:
+      columns:
+        - customer_entity.dob
+        - customer_grid_flat.dob
+        - quote.customer_dob
+        - sales_order.customer_dob
+      entity: DATE_OF_BIRTH
+      operator: replace
+    ip-addresses:
+      columns:
+        - quote.remote_ip
+        - sales_order.remote_ip
+        - sales_order.x_forwarded_for
+        - rating_option_vote.remote_ip
+        - rating_option_vote.remote_ip_long
+        - sendfriend_log.ip
+        - admin_user_session.ip
+        - password_reset_request_event.ip
+        # Dotdigital (optional)
+        - email_contact_consent.consent_ip
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - quote.customer_note
+        - quote_address.customer_notes
+        - sales_order.customer_note
+        - sales_order_status_history.comment
+        - sales_invoice.customer_note
+        - sales_invoice_comment.comment
+        - sales_shipment.customer_note
+        - sales_shipment_comment.comment
+        - sales_creditmemo.customer_note
+        - sales_creditmemo_comment.comment
+        - gift_message.message
+        # Review text (optional)
+        - review_detail.title
+        - review_detail.detail
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - customer_entity.password_hash
+        - quote.password_hash
+        - admin_user.password
+        - admin_passwords.password_hash
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - customer_entity.rp_token
+        - customer_entity.confirmation
+        - customer_grid_flat.confirmation
+        - admin_user.rp_token
+        - newsletter_subscriber.subscriber_confirm_code
+        - oauth_consumer.key
+        - oauth_consumer.secret
+        - oauth_token.token
+        - oauth_token.secret
+        - oauth_token.verifier
+        - login_as_customer.secret
+        - persistent_session.key
+        - sales_order.protect_code
+        - quote_id_mask.masked_id
+        - wishlist.sharing_code
+        - downloadable_link_purchased_item.link_hash
+        - vault_payment_token.gateway_token
+        - paypal_billing_agreement.reference_id
+        - sales_order_confirm_cancel.confirmation_key
+        # Two-factor authentication (optional)
+        - tfa_user_config.encoded_config
+        # Dotdigital (optional)
+        - admin_user.refresh_token
+      entity: API_KEY
+      operator: redact
+    private-keys:
+      columns:
+        - paypal_cert.content
+      entity: PRIVATE_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - customer_entity_varchar.value
+        - customer_entity_text.value
+        - customer_address_entity_varchar.value
+        - customer_address_entity_text.value
+        - quote_payment.additional_information
+        - quote_payment.additional_data
+        - sales_order_payment.additional_information
+        - sales_order_payment.additional_data
+        - sales_payment_transaction.additional_information
+        - paypal_payment_transaction.additional_information
+        - vault_payment_token.details
+        - quote_item_option.value
+        - sales_order_item.product_options
+        - persistent_session.info
+        - admin_user.extra
+        - captcha_log.value
+        - authorization_role.role_name
+        - queue_message.body
+        - magento_operation.serialized_data
+        - magento_operation.result_serialized_data
+        - importexport_importdata.data
+        # Dotdigital (optional)
+        - email_importer.import_data
+      entity: PERSON
+      operator: replace
+```
+
+</Tab>
+<Tab value="2.4.9">
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - customer_entity.email
+        - customer_grid_flat.email
+        - quote.customer_email
+        - quote_address.email
+        - sales_order.customer_email
+        - sales_order_address.email
+        - sales_order_grid.customer_email
+        - sales_invoice_grid.customer_email
+        - sales_shipment_grid.customer_email
+        - sales_creditmemo_grid.customer_email
+        - newsletter_subscriber.subscriber_email
+        - admin_user.email
+        - integration.email
+        - magento_login_as_customer_log.customer_email
+        - password_reset_request_event.account_reference
+        # Dotdigital (optional)
+        - email_contact.email
+        - email_campaign.email
+        - email_automation.email
+        - email_abandoned_cart.email
+        - email_coupon_attribute.email
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - customer_entity.firstname
+        - customer_entity.middlename
+        - customer_entity.lastname
+        - customer_address_entity.firstname
+        - customer_address_entity.middlename
+        - customer_address_entity.lastname
+        - customer_grid_flat.name
+        - customer_grid_flat.billing_firstname
+        - customer_grid_flat.billing_lastname
+        - quote.customer_firstname
+        - quote.customer_middlename
+        - quote.customer_lastname
+        - quote_address.firstname
+        - quote_address.middlename
+        - quote_address.lastname
+        - quote_payment.cc_owner
+        - quote_payment.cc_ss_owner
+        - sales_order.customer_firstname
+        - sales_order.customer_middlename
+        - sales_order.customer_lastname
+        - sales_order_address.firstname
+        - sales_order_address.middlename
+        - sales_order_address.lastname
+        - sales_order_grid.customer_name
+        - sales_order_grid.billing_name
+        - sales_order_grid.shipping_name
+        - sales_invoice_grid.customer_name
+        - sales_invoice_grid.billing_name
+        - sales_shipment_grid.customer_name
+        - sales_shipment_grid.billing_name
+        - sales_shipment_grid.shipping_name
+        - sales_creditmemo_grid.customer_name
+        - sales_creditmemo_grid.billing_name
+        - sales_order_payment.cc_owner
+        - sales_order_payment.echeck_account_name
+        - gift_message.sender
+        - gift_message.recipient
+        - review_detail.nickname
+        - admin_user.firstname
+        - admin_user.lastname
+        - admin_user.username
+        - magento_login_as_customer_log.user_name
+        - oauth_token_request_log.user_name
+        - paypal_settlement_report_row.consumer_id
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - customer_address_entity.telephone
+        - customer_address_entity.fax
+        - customer_grid_flat.billing_telephone
+        - customer_grid_flat.billing_fax
+        - quote_address.telephone
+        - quote_address.fax
+        - sales_order_address.telephone
+        - sales_order_address.fax
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - customer_address_entity.street
+        - customer_address_entity.city
+        - customer_grid_flat.billing_full
+        - customer_grid_flat.shipping_full
+        - customer_grid_flat.billing_street
+        - customer_grid_flat.billing_city
+        - quote_address.street
+        - quote_address.city
+        - sales_order_address.street
+        - sales_order_address.city
+        - sales_order_grid.billing_address
+        - sales_order_grid.shipping_address
+        - sales_invoice_grid.billing_address
+        - sales_invoice_grid.shipping_address
+        - sales_shipment_grid.billing_address
+        - sales_shipment_grid.shipping_address
+        - sales_creditmemo_grid.billing_address
+        - sales_creditmemo_grid.shipping_address
+        - sales_shipment.shipping_label
+      entity: LOCATION
+      operator: hash
+    postcodes:
+      columns:
+        - customer_address_entity.postcode
+        - customer_grid_flat.billing_postcode
+        - quote_address.postcode
+        - sales_order_address.postcode
+      entity: POSTCODE
+      operator: hash
+    companies:
+      columns:
+        - customer_address_entity.company
+        - customer_grid_flat.billing_company
+        - quote_address.company
+        - sales_order_address.company
+      entity: ORGANIZATION
+      operator: hash
+    tax-ids:
+      columns:
+        - customer_entity.taxvat
+        - customer_address_entity.vat_id
+        - customer_grid_flat.taxvat
+        - customer_grid_flat.billing_vat_id
+        - quote.customer_taxvat
+        - quote_address.vat_id
+        - quote_address.validated_vat_number
+        - sales_order.customer_taxvat
+        - sales_order_address.vat_id
+      entity: VAT_NUMBER
+      operator: hash
+    cards:
+      columns:
+        - quote_payment.cc_number_enc
+        - quote_payment.cc_last_4
+        - sales_order_payment.cc_number_enc
+        - sales_order_payment.cc_last_4
+      entity: CREDIT_CARD
+      operator: redact
+    card-codes:
+      columns:
+        - quote_payment.cc_cid_enc
+      entity: CVV
+      operator: redact
+    routing-numbers:
+      columns:
+        - sales_order_payment.echeck_routing_number
+      entity: ROUTING_NUMBER_US
+      operator: redact
+    birth-dates:
+      columns:
+        - customer_entity.dob
+        - customer_grid_flat.dob
+        - quote.customer_dob
+        - sales_order.customer_dob
+      entity: DATE_OF_BIRTH
+      operator: replace
+    ip-addresses:
+      columns:
+        - quote.remote_ip
+        - sales_order.remote_ip
+        - sales_order.x_forwarded_for
+        - rating_option_vote.remote_ip
+        - rating_option_vote.remote_ip_long
+        - sendfriend_log.ip
+        - admin_user_session.ip
+        - password_reset_request_event.ip
+        # Dotdigital (optional)
+        - email_contact_consent.consent_ip
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - quote.customer_note
+        - quote_address.customer_notes
+        - sales_order.customer_note
+        - sales_order_status_history.comment
+        - sales_invoice.customer_note
+        - sales_invoice_comment.comment
+        - sales_shipment.customer_note
+        - sales_shipment_comment.comment
+        - sales_creditmemo.customer_note
+        - sales_creditmemo_comment.comment
+        - gift_message.message
+        # Review text (optional)
+        - review_detail.title
+        - review_detail.detail
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - customer_entity.password_hash
+        - quote.password_hash
+        - admin_user.password
+        - admin_passwords.password_hash
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - customer_entity.rp_token
+        - customer_entity.confirmation
+        - customer_grid_flat.confirmation
+        - admin_user.rp_token
+        - newsletter_subscriber.subscriber_confirm_code
+        - oauth_consumer.key
+        - oauth_consumer.secret
+        - oauth_token.token
+        - oauth_token.secret
+        - oauth_token.verifier
+        - login_as_customer.secret
+        - persistent_session.key
+        - sales_order.protect_code
+        - quote_id_mask.masked_id
+        - wishlist.sharing_code
+        - downloadable_link_purchased_item.link_hash
+        - vault_payment_token.gateway_token
+        - paypal_billing_agreement.reference_id
+        - sales_order_confirm_cancel.confirmation_key
+        # Two-factor authentication (optional)
+        - tfa_user_config.encoded_config
+        # Dotdigital (optional)
+        - admin_user.refresh_token
+      entity: API_KEY
+      operator: redact
+    private-keys:
+      columns:
+        - paypal_cert.content
+      entity: PRIVATE_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - customer_entity_varchar.value
+        - customer_entity_text.value
+        - customer_address_entity_varchar.value
+        - customer_address_entity_text.value
+        - quote_payment.additional_information
+        - quote_payment.additional_data
+        - sales_order_payment.additional_information
+        - sales_order_payment.additional_data
+        - sales_payment_transaction.additional_information
+        - paypal_payment_transaction.additional_information
+        - vault_payment_token.details
+        - quote_item_option.value
+        - sales_order_item.product_options
+        - persistent_session.info
+        - admin_user.extra
+        - captcha_log.value
+        - authorization_role.role_name
+        - queue_message.body
+        - magento_operation.serialized_data
+        - magento_operation.result_serialized_data
+        - importexport_importdata.data
+        # Dotdigital (optional)
+        - email_importer.import_data
+      entity: PERSON
+      operator: replace
+```
+
+</Tab>
+</Tabs>
+
+**Choices**
+
+- `password_reset_request_event.account_reference` is `EMAIL_ADDRESS`: admins and customers both reset by e-mail. `oauth_token_request_log.user_name` holds usernames or e-mail addresses: `PERSON`.
+- The sales grids and `customer_grid_flat` are indexer copies of the source tables, so both are ruled. `sales_shipment.shipping_label` is the label image, printing the recipient's address.
+- `cc_last_4` is `CREDIT_CARD`; `cc_number_enc` and `cc_cid_enc` are encrypted with the deployment key and redacted anyway. `tfa_user_config.encoded_config` holds admins' encrypted two-factor secrets.
+- Optional parts: delete the commented module columns you do not run, the review text if reviews may stay readable (the storefront shows them), and the `mixed-content` rule if the assistant needs those columns readable.
+- A customer attribute marked "Add to Column Options" adds a `customer_grid_flat` column named by its code; add it to the rule for its data type.
+
+## Trade-offs
+
+- **Indexed ruled columns:** the FULLTEXT name, address, and e-mail columns of `customer_grid_flat` and the four sales grids; `customer_entity.email`, `firstname`, `lastname`; `admin_user.username`; `oauth_consumer.key`, `secret`; `oauth_token.token`; `persistent_session.key`; `login_as_customer.secret`; `newsletter_subscriber.subscriber_email`.
+- **Lookups that stop working:** customers, orders, or subscribers by e-mail, name, or phone; the admin grids' keyword search; admins by username; guest carts by masked id.
+- **Join keys that stay unruled:** `entity_id` on every table, referenced as `parent_id`, `customer_id`, `quote_id`, and `order_id`; `increment_id` is the order number customers see.
+- **Guest orders:** `customer_id` is `NULL`, so a guest's orders link only through `customer_email` tokens in the output.
+
+## Not covered
+
+- Adobe Commerce-only modules (B2B, gift registry, RMA, store credit): schema not public.
+- Gateway and carrier references (`paypal_payer_id`, `last_trans_id`, `txn_id`, `track_number`): no fitting data type.
+- `cc_exp_month`, `cc_exp_year`, `cc_type`: not identifying without the card number.
+- `core_config_data.value`: store configuration the assistant needs to read; core credential fields are stored encrypted.
+- `integration.endpoint`, `oauth_consumer.callback_url`: configuration URLs.
+- Search indexes, Redis sessions, and `var/log`: outside the database.
+
+## Sources
+
+- [magento/magento2 at 2.4.9](https://github.com/magento/magento2/tree/2.4.9/app/code/Magento): `*/etc/db_schema.xml`, `Customer/etc/indexer.xml`, [`Framework/Indexer/GridStructure.php`](https://github.com/magento/magento2/blob/2.4.9/lib/internal/Magento/Framework/Indexer/GridStructure.php)
+- [magento/magento2 at 2.4.8-p5](https://github.com/magento/magento2/tree/2.4.8-p5/app/code/Magento) and [2.4.7-p10](https://github.com/magento/magento2/tree/2.4.7-p10/app/code/Magento): the same files
+- [magento/security-package `TwoFactorAuth/etc/db_schema.xml` at 1.1.8](https://github.com/magento/security-package/blob/1.1.8/TwoFactorAuth/etc/db_schema.xml)
+- [dotmailer/dotmailer-magento2-extension `etc/db_schema.xml` at v4.38.1](https://github.com/dotmailer/dotmailer-magento2-extension/blob/v4.38.1/etc/db_schema.xml)

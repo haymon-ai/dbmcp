@@ -1,0 +1,1064 @@
+---
+title: Odoo
+description: Privacy rules for Odoo Community 17.0 to 20.0 on PostgreSQL
+---
+
+Covers contacts, users, chatter and mail, mail-server logins, API keys, two-factor secrets, devices, and the CRM, HR, sales, OAuth, and calendar modules.
+
+## Coverage
+
+- **Versions:** 17.0 to 20.0, Community edition.
+- **Engines:** PostgreSQL. One Odoo server hosts many databases: set `database.name` to the one you connect to.
+- **Table prefix:** the template assumes unprefixed table names. Odoo uses no table prefix.
+
+## Template
+
+<Tabs groupId="odoo-version" persist items={['17.0', '18.0', '19.0', '20.0']} defaultIndex={3}>
+<Tab value="17.0">
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - res_partner.email
+        - res_partner.email_normalized
+        - res_users.login
+        - res_company.email
+        - mail_message.email_from
+        - mail_message.reply_to
+        - mail_mail.email_to
+        - mail_mail.email_cc
+        - mail_blacklist.email
+        - ir_mail_server.smtp_user
+        - fetchmail_server.user
+        # crm (optional)
+        - crm_lead.email_from
+        - crm_lead.email_normalized
+        # hr (optional)
+        - hr_employee.work_email
+        - hr_employee.private_email
+        # sale, account, payment (optional)
+        - account_move.invoice_source_email
+        - payment_transaction.partner_email
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - res_partner.name
+        - res_partner.complete_name
+        - res_partner.commercial_company_name
+        - mail_guest.name
+        - mail_activity.res_name
+        - mail_message.record_name
+        - res_partner_bank.acc_holder_name
+        # auth_oauth (optional)
+        - res_users.oauth_uid
+        # crm (optional)
+        - crm_lead.contact_name
+        # hr (optional)
+        - hr_employee.name
+        - hr_employee.emergency_contact
+        - resource_resource.name
+        - hr_employee.spouse_complete_name
+        # sale, account, payment (optional)
+        - sale_order.signed_by
+        - account_move.invoice_partner_display_name
+        - payment_transaction.partner_name
+        # calendar (optional)
+        - calendar_attendee.common_name
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - res_partner.phone_sanitized
+        - res_partner.phone
+        - res_company.phone
+        - phone_blacklist.number
+        - res_partner.mobile
+        - res_company.mobile
+        # crm (optional)
+        - crm_lead.phone
+        - crm_lead.phone_sanitized
+        - crm_lead.mobile
+        # hr (optional)
+        - hr_employee.work_phone
+        - hr_employee.mobile_phone
+        - hr_employee.private_phone
+        - hr_employee.emergency_phone
+        # sale, account, payment (optional)
+        - payment_transaction.partner_phone
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - res_partner.street
+        - res_partner.street2
+        - res_partner.city
+        - res_partner.partner_latitude
+        - res_partner.partner_longitude
+        # crm (optional)
+        - crm_lead.street
+        - crm_lead.street2
+        - crm_lead.city
+        # hr (optional)
+        - hr_employee.place_of_birth
+        - hr_employee.private_street
+        - hr_employee.private_street2
+        - hr_employee.private_city
+        # sale, account, payment (optional)
+        - payment_transaction.partner_address
+        - payment_transaction.partner_city
+      entity: LOCATION
+      operator: hash
+    postcodes:
+      columns:
+        - res_partner.zip
+        # crm (optional)
+        - crm_lead.zip
+        # hr (optional)
+        - hr_employee.private_zip
+        # sale, account, payment (optional)
+        - payment_transaction.partner_zip
+      entity: POSTCODE
+      operator: hash
+    companies:
+      columns:
+        - res_partner.company_name
+        # crm (optional)
+        - crm_lead.partner_name
+      entity: ORGANIZATION
+      operator: hash
+    tax-ids:
+      columns:
+        - res_partner.vat
+      entity: VAT_NUMBER
+      operator: hash
+    registry-numbers:
+      columns:
+        - res_partner.company_registry
+      entity: COMMERCIAL_REGISTER_DE
+      operator: hash
+    bank-accounts:
+      columns:
+        - res_partner_bank.acc_number
+        - res_partner_bank.sanitized_acc_number
+      entity: IBAN_CODE
+      operator: hash
+    cards:
+      columns:
+        # sale, account, payment (optional)
+        - payment_token.payment_details
+      entity: CREDIT_CARD
+      operator: redact
+    birth-dates:
+      columns:
+        # hr (optional)
+        - hr_employee.birthday
+        - hr_employee.spouse_birthdate
+      entity: DATE_OF_BIRTH
+      operator: replace
+    social-security-numbers:
+      columns:
+        # hr (optional)
+        - hr_employee.ssnid
+      entity: US_SSN
+      operator: replace
+    social-insurance-numbers:
+      columns:
+        # hr (optional)
+        - hr_employee.sinid
+      entity: SIN_CA
+      operator: replace
+    id-cards:
+      columns:
+        # hr (optional)
+        - hr_employee.identification_id
+      entity: ID_CARD_DE
+      operator: replace
+    passports:
+      columns:
+        # hr (optional)
+        - hr_employee.permit_no
+        - hr_employee.visa_no
+        - hr_employee.passport_id
+      entity: PASSPORT_US
+      operator: replace
+    license-plates:
+      columns:
+        # hr (optional)
+        - hr_employee.private_car_plate
+      entity: LICENSE_PLATE_DE
+      operator: replace
+    text:
+      columns:
+        - res_partner.comment
+        - res_users.signature
+        - mail_message.subject
+        - mail_message.body
+        - mail_mail.body_html
+        - mail_message_translation.body
+        - mail_activity.summary
+        - mail_activity.note
+        # crm (optional)
+        - crm_lead.description
+        # hr (optional)
+        - hr_employee.additional_note
+        - hr_employee.notes
+        - hr_employee.departure_description
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - res_users.password
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - res_users.totp_secret
+        - res_users_apikeys.key
+        - res_users_apikeys.index
+        - auth_totp_device.key
+        - auth_totp_device.index
+        - mail_guest.access_token
+        - ir_attachment.access_token
+        - ir_mail_server.smtp_pass
+        - fetchmail_server.password
+        - res_partner.signup_token
+        - mail_partner_device.endpoint
+        - mail_partner_device.keys
+        # auth_oauth (optional)
+        - res_users.oauth_access_token
+        # hr (optional)
+        - hr_employee.barcode
+        - hr_employee.pin
+        # sale, account, payment (optional)
+        - sale_order.access_token
+        - account_move.access_token
+        - payment_token.provider_ref
+        # calendar (optional)
+        - calendar_attendee.access_token
+      entity: API_KEY
+      operator: redact
+    private-keys:
+      columns:
+        - ir_mail_server.smtp_ssl_private_key
+      entity: PRIVATE_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - mail_tracking_value.old_value_char
+        - mail_tracking_value.old_value_text
+        - mail_tracking_value.new_value_char
+        - mail_tracking_value.new_value_text
+        - mail_mail.headers
+        - mail_mail.failure_reason
+        - mail_notification.failure_reason
+        - ir_attachment.index_content
+      entity: PERSON
+      operator: replace
+    # Keep: mixed-content columns that hold credentials.
+    mixed-content-secrets:
+      columns:
+        - ir_config_parameter.value
+        - ir_attachment.db_datas
+      entity: API_KEY
+      operator: redact
+```
+
+</Tab>
+<Tab value="18.0">
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - res_partner.email
+        - res_partner.email_normalized
+        - res_users.login
+        - res_company.email
+        - mail_message.email_from
+        - mail_message.reply_to
+        - mail_mail.email_to
+        - mail_mail.email_cc
+        - mail_blacklist.email
+        - ir_mail_server.smtp_user
+        - fetchmail_server.user
+        # crm (optional)
+        - crm_lead.email_from
+        - crm_lead.email_normalized
+        # hr (optional)
+        - hr_employee.work_email
+        - hr_employee.private_email
+        # sale, account, payment (optional)
+        - account_move.invoice_source_email
+        - payment_transaction.partner_email
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - res_partner.name
+        - res_partner.complete_name
+        - res_partner.commercial_company_name
+        - mail_guest.name
+        - mail_activity.res_name
+        - mail_message.record_name
+        - res_partner_bank.acc_holder_name
+        # auth_oauth (optional)
+        - res_users.oauth_uid
+        # crm (optional)
+        - crm_lead.contact_name
+        # hr (optional)
+        - hr_employee.name
+        - hr_employee.emergency_contact
+        - resource_resource.name
+        - hr_employee.spouse_complete_name
+        # sale, account, payment (optional)
+        - sale_order.signed_by
+        - account_move.invoice_partner_display_name
+        - payment_transaction.partner_name
+        # calendar (optional)
+        - calendar_attendee.common_name
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - res_partner.phone_sanitized
+        - res_partner.phone
+        - res_company.phone
+        - phone_blacklist.number
+        - res_partner.mobile
+        - res_company.mobile
+        # crm (optional)
+        - crm_lead.phone
+        - crm_lead.phone_sanitized
+        - crm_lead.mobile
+        # hr (optional)
+        - hr_employee.work_phone
+        - hr_employee.mobile_phone
+        - hr_employee.private_phone
+        - hr_employee.emergency_phone
+        # sale, account, payment (optional)
+        - payment_transaction.partner_phone
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - res_partner.street
+        - res_partner.street2
+        - res_partner.city
+        - res_partner.partner_latitude
+        - res_partner.partner_longitude
+        - res_device_log.city
+        # crm (optional)
+        - crm_lead.street
+        - crm_lead.street2
+        - crm_lead.city
+        # hr (optional)
+        - hr_employee.place_of_birth
+        - hr_employee.private_street
+        - hr_employee.private_street2
+        - hr_employee.private_city
+        # sale, account, payment (optional)
+        - payment_transaction.partner_address
+        - payment_transaction.partner_city
+      entity: LOCATION
+      operator: hash
+    postcodes:
+      columns:
+        - res_partner.zip
+        # crm (optional)
+        - crm_lead.zip
+        # hr (optional)
+        - hr_employee.private_zip
+        # sale, account, payment (optional)
+        - payment_transaction.partner_zip
+      entity: POSTCODE
+      operator: hash
+    companies:
+      columns:
+        - res_partner.company_name
+        # crm (optional)
+        - crm_lead.partner_name
+      entity: ORGANIZATION
+      operator: hash
+    tax-ids:
+      columns:
+        - res_partner.vat
+      entity: VAT_NUMBER
+      operator: hash
+    registry-numbers:
+      columns:
+        - res_partner.company_registry
+      entity: COMMERCIAL_REGISTER_DE
+      operator: hash
+    bank-accounts:
+      columns:
+        - res_partner_bank.acc_number
+        - res_partner_bank.sanitized_acc_number
+      entity: IBAN_CODE
+      operator: hash
+    cards:
+      columns:
+        # sale, account, payment (optional)
+        - payment_token.payment_details
+      entity: CREDIT_CARD
+      operator: redact
+    birth-dates:
+      columns:
+        # hr (optional)
+        - hr_employee.birthday
+        - hr_employee.spouse_birthdate
+      entity: DATE_OF_BIRTH
+      operator: replace
+    social-security-numbers:
+      columns:
+        # hr (optional)
+        - hr_employee.ssnid
+      entity: US_SSN
+      operator: replace
+    social-insurance-numbers:
+      columns:
+        # hr (optional)
+        - hr_employee.sinid
+      entity: SIN_CA
+      operator: replace
+    id-cards:
+      columns:
+        # hr (optional)
+        - hr_employee.identification_id
+      entity: ID_CARD_DE
+      operator: replace
+    passports:
+      columns:
+        # hr (optional)
+        - hr_employee.permit_no
+        - hr_employee.visa_no
+        - hr_employee.passport_id
+      entity: PASSPORT_US
+      operator: replace
+    license-plates:
+      columns:
+        # hr (optional)
+        - hr_employee.private_car_plate
+      entity: LICENSE_PLATE_DE
+      operator: replace
+    ip-addresses:
+      columns:
+        - res_device_log.ip_address
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - res_partner.comment
+        - res_users.signature
+        - mail_message.subject
+        - mail_message.body
+        - mail_mail.body_html
+        - mail_message_translation.body
+        - mail_activity.summary
+        - mail_activity.note
+        - mail_scheduled_message.subject
+        - mail_scheduled_message.body
+        # crm (optional)
+        - crm_lead.description
+        # hr (optional)
+        - hr_employee.additional_note
+        - hr_employee.notes
+        - hr_employee.departure_description
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - res_users.password
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - res_users.totp_secret
+        - res_users_apikeys.key
+        - res_users_apikeys.index
+        - auth_totp_device.key
+        - auth_totp_device.index
+        - mail_guest.access_token
+        - ir_attachment.access_token
+        - ir_mail_server.smtp_pass
+        - fetchmail_server.password
+        - res_device_log.session_identifier
+        - mail_push_device.endpoint
+        - mail_push_device.keys
+        # auth_oauth (optional)
+        - res_users.oauth_access_token
+        # hr (optional)
+        - hr_employee.barcode
+        - hr_employee.pin
+        # sale, account, payment (optional)
+        - sale_order.access_token
+        - account_move.access_token
+        - payment_token.provider_ref
+        # calendar (optional)
+        - calendar_attendee.access_token
+      entity: API_KEY
+      operator: redact
+    private-keys:
+      columns:
+        - ir_mail_server.smtp_ssl_private_key
+      entity: PRIVATE_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - mail_tracking_value.old_value_char
+        - mail_tracking_value.old_value_text
+        - mail_tracking_value.new_value_char
+        - mail_tracking_value.new_value_text
+        - mail_mail.headers
+        - mail_mail.failure_reason
+        - mail_notification.failure_reason
+        - ir_attachment.index_content
+      entity: PERSON
+      operator: replace
+    # Keep: mixed-content columns that hold credentials.
+    mixed-content-secrets:
+      columns:
+        - ir_config_parameter.value
+        - ir_attachment.db_datas
+      entity: API_KEY
+      operator: redact
+```
+
+</Tab>
+<Tab value="19.0">
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - res_partner.email
+        - res_partner.email_normalized
+        - res_users.login
+        - res_company.email
+        - mail_message.email_from
+        - mail_message.reply_to
+        - mail_mail.email_to
+        - mail_mail.email_cc
+        - mail_blacklist.email
+        - ir_mail_server.smtp_user
+        - fetchmail_server.user
+        - mail_message.incoming_email_to
+        - mail_message.incoming_email_cc
+        - mail_message.outgoing_email_to
+        - mail_notification.mail_email_address
+        - mail_guest.email
+        # crm (optional)
+        - crm_lead.email_from
+        - crm_lead.email_normalized
+        # hr (optional)
+        - hr_employee.work_email
+        - hr_employee.private_email
+        # sale, account, payment (optional)
+        - account_move.invoice_source_email
+        - payment_transaction.partner_email
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - res_partner.name
+        - res_partner.complete_name
+        - res_partner.commercial_company_name
+        - mail_guest.name
+        - mail_activity.res_name
+        - res_partner_bank.acc_holder_name
+        # auth_oauth (optional)
+        - res_users.oauth_uid
+        # crm (optional)
+        - crm_lead.contact_name
+        # hr (optional)
+        - hr_employee.name
+        - hr_employee.emergency_contact
+        - resource_resource.name
+        - hr_employee.legal_name
+        - hr_version.spouse_complete_name
+        # sale, account, payment (optional)
+        - sale_order.signed_by
+        - account_move.invoice_partner_display_name
+        - payment_transaction.partner_name
+        # calendar (optional)
+        - calendar_attendee.common_name
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - res_partner.phone
+        - res_company.phone
+        - phone_blacklist.number
+        - res_partner.phone_sanitized
+        # crm (optional)
+        - crm_lead.phone
+        - crm_lead.phone_sanitized
+        # hr (optional)
+        - hr_employee.work_phone
+        - hr_employee.mobile_phone
+        - hr_employee.private_phone
+        - hr_employee.emergency_phone
+        # sale, account, payment (optional)
+        - payment_transaction.partner_phone
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - res_partner.street
+        - res_partner.street2
+        - res_partner.city
+        - res_partner.partner_latitude
+        - res_partner.partner_longitude
+        - res_device_log.city
+        # crm (optional)
+        - crm_lead.street
+        - crm_lead.street2
+        - crm_lead.city
+        # hr (optional)
+        - hr_employee.place_of_birth
+        - hr_version.private_street
+        - hr_version.private_street2
+        - hr_version.private_city
+        # sale, account, payment (optional)
+        - payment_transaction.partner_address
+        - payment_transaction.partner_city
+      entity: LOCATION
+      operator: hash
+    postcodes:
+      columns:
+        - res_partner.zip
+        # crm (optional)
+        - crm_lead.zip
+        # hr (optional)
+        - hr_version.private_zip
+        # sale, account, payment (optional)
+        - payment_transaction.partner_zip
+      entity: POSTCODE
+      operator: hash
+    companies:
+      columns:
+        - res_partner.company_name
+        # crm (optional)
+        - crm_lead.partner_name
+      entity: ORGANIZATION
+      operator: hash
+    tax-ids:
+      columns:
+        - res_partner.vat
+      entity: VAT_NUMBER
+      operator: hash
+    registry-numbers:
+      columns:
+        - res_partner.company_registry
+      entity: COMMERCIAL_REGISTER_DE
+      operator: hash
+    bank-accounts:
+      columns:
+        - res_partner_bank.acc_number
+        - res_partner_bank.sanitized_acc_number
+      entity: IBAN_CODE
+      operator: hash
+    cards:
+      columns:
+        # sale, account, payment (optional)
+        - payment_token.payment_details
+      entity: CREDIT_CARD
+      operator: redact
+    birth-dates:
+      columns:
+        # hr (optional)
+        - hr_employee.birthday
+        - hr_version.spouse_birthdate
+      entity: DATE_OF_BIRTH
+      operator: replace
+    social-security-numbers:
+      columns:
+        # hr (optional)
+        - hr_version.ssnid
+      entity: US_SSN
+      operator: replace
+    id-cards:
+      columns:
+        # hr (optional)
+        - hr_version.identification_id
+      entity: ID_CARD_DE
+      operator: replace
+    passports:
+      columns:
+        # hr (optional)
+        - hr_employee.permit_no
+        - hr_employee.visa_no
+        - hr_version.passport_id
+      entity: PASSPORT_US
+      operator: replace
+    license-plates:
+      columns:
+        # hr (optional)
+        - hr_employee.private_car_plate
+      entity: LICENSE_PLATE_DE
+      operator: replace
+    ip-addresses:
+      columns:
+        - res_device_log.ip_address
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - res_partner.comment
+        - res_users.signature
+        - mail_message.subject
+        - mail_message.body
+        - mail_mail.body_html
+        - mail_message_translation.body
+        - mail_activity.summary
+        - mail_activity.note
+        - mail_scheduled_message.subject
+        - mail_scheduled_message.body
+        - res_users.out_of_office_message
+        - mail_activity.feedback
+        - res_partner_bank.note
+        # crm (optional)
+        - crm_lead.description
+        # hr (optional)
+        - hr_version.additional_note
+        - hr_version.departure_description
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - res_users.password
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - res_users.totp_secret
+        - res_users_apikeys.key
+        - res_users_apikeys.index
+        - auth_totp_device.key
+        - auth_totp_device.index
+        - mail_guest.access_token
+        - ir_attachment.access_token
+        - ir_mail_server.smtp_pass
+        - fetchmail_server.password
+        - res_device_log.session_identifier
+        - mail_push_device.endpoint
+        - mail_push_device.keys
+        # auth_oauth (optional)
+        - res_users.oauth_access_token
+        # hr (optional)
+        - hr_employee.barcode
+        - hr_employee.pin
+        # sale, account, payment (optional)
+        - sale_order.access_token
+        - account_move.access_token
+        - payment_token.provider_ref
+        # calendar (optional)
+        - calendar_attendee.access_token
+      entity: API_KEY
+      operator: redact
+    private-keys:
+      columns:
+        - ir_mail_server.smtp_ssl_private_key
+      entity: PRIVATE_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - mail_tracking_value.old_value_char
+        - mail_tracking_value.old_value_text
+        - mail_tracking_value.new_value_char
+        - mail_tracking_value.new_value_text
+        - mail_mail.headers
+        - mail_mail.failure_reason
+        - mail_notification.failure_reason
+        - ir_attachment.index_content
+      entity: PERSON
+      operator: replace
+    # Keep: mixed-content columns that hold credentials.
+    mixed-content-secrets:
+      columns:
+        - ir_config_parameter.value
+        - ir_attachment.db_datas
+      entity: API_KEY
+      operator: redact
+```
+
+</Tab>
+<Tab value="20.0">
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - res_partner.email
+        - res_partner.email_normalized
+        - res_users.login
+        - res_company.email
+        - mail_message.email_from
+        - mail_message.reply_to
+        - mail_mail.email_to
+        - mail_mail.email_cc
+        - mail_blacklist.email
+        - ir_mail_server.smtp_user
+        - fetchmail_server.user
+        - mail_message.incoming_email_to
+        - mail_message.incoming_email_cc
+        - mail_message.outgoing_email_to
+        - mail_notification.mail_email_address
+        - mail_guest.email
+        # crm (optional)
+        - crm_lead.email_from
+        - crm_lead.email_normalized
+        # hr (optional)
+        - hr_employee.work_email
+        - hr_employee.private_email
+        # sale, account, payment (optional)
+        - account_move.invoice_source_email
+        - payment_transaction.partner_email
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - res_partner.name
+        - res_partner.complete_name
+        - res_partner.commercial_company_name
+        - mail_guest.name
+        - mail_activity.res_name
+        - res_partner_bank.holder_name
+        # auth_oauth (optional)
+        - res_users.oauth_uid
+        # crm (optional)
+        - crm_lead.contact_name
+        # hr (optional)
+        - hr_employee.name
+        - hr_employee.emergency_contact
+        - resource_resource.name
+        - hr_employee.legal_name
+        - hr_version.spouse_complete_name
+        # sale, account, payment (optional)
+        - sale_order.signed_by
+        - account_move.invoice_partner_display_name
+        - payment_transaction.partner_name
+        # calendar (optional)
+        - calendar_attendee.common_name
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - res_partner.phone
+        - res_company.phone
+        - phone_blacklist.number
+        - res_partner.phone_sanitized
+        - mail_activity.phone
+        # crm (optional)
+        - crm_lead.phone
+        - crm_lead.phone_sanitized
+        # hr (optional)
+        - hr_employee.work_phone
+        - hr_employee.mobile_phone
+        - hr_employee.private_phone
+        - hr_employee.emergency_phone
+        # sale, account, payment (optional)
+        - payment_transaction.partner_phone
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - res_partner.street
+        - res_partner.street2
+        - res_partner.city
+        - res_partner.partner_latitude
+        - res_partner.partner_longitude
+        - res_device_log.city
+        # crm (optional)
+        - crm_lead.street
+        - crm_lead.street2
+        - crm_lead.city
+        # hr (optional)
+        - hr_employee.place_of_birth
+        - hr_version.private_street
+        - hr_version.private_street2
+        - hr_version.private_city
+        # sale, account, payment (optional)
+        - payment_transaction.partner_address
+        - payment_transaction.partner_city
+      entity: LOCATION
+      operator: hash
+    postcodes:
+      columns:
+        - res_partner.zip
+        # crm (optional)
+        - crm_lead.zip
+        # hr (optional)
+        - hr_version.private_zip
+        # sale, account, payment (optional)
+        - payment_transaction.partner_zip
+      entity: POSTCODE
+      operator: hash
+    companies:
+      columns:
+        # crm (optional)
+        - crm_lead.partner_name
+      entity: ORGANIZATION
+      operator: hash
+    tax-ids:
+      columns:
+        - res_partner.vat
+      entity: VAT_NUMBER
+      operator: hash
+    bank-accounts:
+      columns:
+        - res_partner_bank.account_number
+        - res_partner_bank.sanitized_account_number
+      entity: IBAN_CODE
+      operator: hash
+    cards:
+      columns:
+        # sale, account, payment (optional)
+        - payment_token.payment_details
+      entity: CREDIT_CARD
+      operator: redact
+    birth-dates:
+      columns:
+        # hr (optional)
+        - hr_employee.birthday
+        - hr_version.spouse_birthdate
+      entity: DATE_OF_BIRTH
+      operator: replace
+    id-cards:
+      columns:
+        # hr (optional)
+        - hr_version.identification_id
+      entity: ID_CARD_DE
+      operator: replace
+    passports:
+      columns:
+        # hr (optional)
+        - hr_employee.permit_no
+        - hr_employee.visa_no
+        - hr_version.passport_id
+      entity: PASSPORT_US
+      operator: replace
+    ip-addresses:
+      columns:
+        - res_device_log.ip_address
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - res_partner.comment
+        - res_users.signature
+        - mail_message.subject
+        - mail_message.body
+        - mail_mail.body_html
+        - mail_message_translation.body
+        - mail_activity.summary
+        - mail_activity.note
+        - mail_scheduled_message.subject
+        - mail_scheduled_message.body
+        - res_users.out_of_office_message
+        - mail_activity.feedback
+        - res_partner_bank.note
+        # crm (optional)
+        - crm_lead.description
+        # hr (optional)
+        - hr_employee.additional_note
+        - hr_employee_departure.departure_description
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - res_users.password
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - res_users.totp_secret
+        - res_users_apikeys.key
+        - res_users_apikeys.index
+        - auth_totp_device.key
+        - auth_totp_device.index
+        - mail_guest.access_token
+        - ir_attachment.access_token
+        - ir_mail_server.smtp_pass
+        - fetchmail_server.password
+        - res_device_log.session_identifier
+        - mail_push_device.endpoint
+        - mail_push_device.keys
+        # auth_oauth (optional)
+        - res_users.oauth_access_token
+        # hr (optional)
+        - hr_employee.barcode
+        - hr_employee.pin
+        # sale, account, payment (optional)
+        - sale_order.access_token
+        - account_move.access_token
+        - payment_token.provider_ref
+        # calendar (optional)
+        - calendar_attendee.access_token
+      entity: API_KEY
+      operator: redact
+    private-keys:
+      columns:
+        - ir_mail_server.smtp_ssl_private_key
+      entity: PRIVATE_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - mail_tracking_value.old_value_char
+        - mail_tracking_value.old_value_text
+        - mail_tracking_value.new_value_char
+        - mail_tracking_value.new_value_text
+        - mail_mail.headers
+        - mail_mail.failure_reason
+        - mail_notification.failure_reason
+        - ir_attachment.index_content
+        - res_partner.additional_identifiers
+      entity: PERSON
+      operator: replace
+    # Keep: mixed-content columns that hold credentials.
+    mixed-content-secrets:
+      columns:
+        - ir_config_parameter.value
+        - ir_attachment.db_datas
+      entity: API_KEY
+      operator: redact
+```
+
+</Tab>
+</Tabs>
+
+**Choices**
+
+- Logins (`res_users.login`, SMTP and IMAP users) are `EMAIL_ADDRESS`: Odoo logins are e-mail addresses by default.
+- `res_users_apikeys.index` and `auth_totp_device.index` hold the key's first 8 hex digits in clear.
+- Upgrades keep removed fields' columns with stale values: on an upgraded database, also add older versions' columns; 20.0 moved `company_registry` into `additional_identifiers`.
+- Optional parts: delete the commented module columns you do not run and the `mixed-content` rule to keep those columns readable. Keep `mixed-content-secrets`: `ir_config_parameter.value` holds the session-signing `database.secret`.
+- Custom fields are `x_…` columns (`x_studio_…` from Studio) on the model's table; add each to the rule for its data type.
+
+## Trade-offs
+
+- **Indexed ruled columns:** `res_partner.name`, `complete_name`, `vat`, `email_normalized`, `phone`, `phone_sanitized`; `res_users.login`; both `index` columns; `res_partner_bank.sanitized_acc_number` (`sanitized_account_number` in 20.0); `mail_blacklist.email`; `phone_blacklist.number`; push-device `endpoint`; `res_device_log.session_identifier` (18.0+); `crm_lead` contact columns; `hr_employee.barcode`; `res_users.oauth_uid`.
+- **Lookups that stop working:** contacts by name, e-mail, phone, or VAT number; users by login; bank accounts by number; sessions by IP address.
+- **Join keys that stay unruled:** `id` and `*_id` columns, such as `res_users.partner_id` and `mail_message.res_id` (with `model`).
+
+## Not covered
+
+- `ir_attachment` filestore files: the database holds only the path.
+- `res_partner.function`, `website`, `ref`, `lang`, `tz`: not identifying alone, or join keys.
+- `res_bank` and the bank columns of `res_partner_bank`: the bank's data, not the holder's.
+- `crm_lead.name`: lead title; add it to `names` if it names customers.
+- `account_move.narration`, `sale_order.note`, document references: boilerplate and reference numbers.
+- `hr_employee.study_field`, `study_school`, `id_card_name`, `driving_license_name`: education and document file names.
+
+## Sources
+
+- [odoo/odoo](https://github.com/odoo/odoo) model files in `odoo/addons/base` and `addons/` (`mail`, `mail_tracking`, `auth_totp`, `auth_signup`, `auth_oauth`, `phone_validation`, `crm`, `hr`, `resource`, `sale`, `account`, `portal`, `payment`, `calendar`) at [17.0](https://github.com/odoo/odoo/tree/b2049096074a067b6935938b2f6196d095ee08e7), [18.0](https://github.com/odoo/odoo/tree/a08aa7340922e36c0303d80b87e3de14d3978714), [19.0](https://github.com/odoo/odoo/tree/88c875a887808d36a1041b99f2c9095f7cc84233), [20.0](https://github.com/odoo/odoo/tree/a03163b664d407d051f45891eb9ed966585ca6e3)

@@ -1,0 +1,169 @@
+---
+title: Ghost
+description: Privacy rules for Ghost 6.x on MySQL 8 and SQLite
+---
+
+Covers the e-mail addresses, names, notes, IPs, password hashes, and tokens Ghost 6 stores for members and staff, including newsletter recipient, Stripe, donation, gift, and automation copies.
+
+## Coverage
+
+- **Versions:** 6.0 to 6.79.
+- **Engines:** MySQL 8, SQLite.
+- **Table prefix:** the template assumes unprefixed table names. Ghost uses no table prefix.
+
+## Template
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - members.email
+        - users.email
+        - invites.email
+        - members_stripe_customers.email
+        - members_email_change_events.from_email
+        - members_email_change_events.to_email
+        - email_recipients.member_email
+        - donation_payment_events.email
+        - suppressions.email
+        - email_spam_complaint_events.email_address
+        - automated_email_recipients.member_email
+        - automation_runs.member_email
+        - gifts.buyer_email
+        - gift_deliveries.recipient_email
+        # Sender addresses (optional)
+        - newsletters.sender_email
+        - email_design_settings.sender_email
+        - welcome_email_automated_emails.sender_email
+        - automated_emails.sender_email   # before 6.30
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - members.name
+        - users.name
+        - members_stripe_customers.name
+        - email_recipients.member_name
+        - donation_payment_events.name
+        - automated_email_recipients.member_name
+        - gifts.buyer_name
+        - gifts.recipient_name
+        # Staff public profiles (optional)
+        - users.facebook
+        - users.twitter
+        - users.threads
+        - users.bluesky
+        - users.mastodon
+        - users.tiktok
+        - users.youtube
+        - users.instagram
+        - users.linkedin
+      entity: PERSON
+      operator: hash
+    addresses:
+      columns:
+        - members.geolocation
+        # Staff public profiles (optional)
+        - users.location
+      entity: LOCATION
+      operator: hash
+    urls:
+      columns:
+        # Staff public profiles (optional)
+        - users.website
+      entity: URL
+      operator: replace
+    ip-addresses:
+      columns:
+        - user_sessions.ip_address
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - members.note
+        - members.expertise
+        - donation_payment_events.donation_message
+        - gifts.personal_message
+        # Staff public profiles (optional)
+        - users.bio
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - users.password
+        - user_accounts.password
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - api_keys.secret
+        - webhooks.secret
+        - tokens.token
+        - invites.token
+        - sessions.session_id
+        - members.transient_id
+        - user_sessions.token
+        - user_accounts.access_token
+        - user_accounts.refresh_token
+        - user_accounts.id_token
+        - user_two_factors.secret
+        - user_two_factors.backup_codes
+        - verifications.value
+        - gifts.token
+        - gift_links.token
+        - post_gift_links.gift_link_token
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - tokens.data
+        - verifications.identifier
+        - sessions.session_data
+        - comments.html
+        - email_recipient_failures.message
+        - members_metafield_values.value_text
+        - actions.context
+      entity: PERSON
+      operator: replace
+    # Keep: mixed-content columns that hold credentials.
+    mixed-content-secrets:
+      columns:
+        - settings.value
+      entity: API_KEY
+      operator: redact
+```
+
+**Choices**
+
+- `members.geolocation` is a JSON string of the country and region looked up from the sign-up IP.
+- Sender addresses are set by staff and can be a person's; `automated_emails` is the pre-6.30 name of `welcome_email_automated_emails`.
+- Optional parts: delete the commented staff-profile and sender-address columns you want readable, and the `mixed-content` rules if the assistant needs those columns readable.
+- Custom member field values sit in `members_metafield_values.value_text`, ruled under `mixed-content`.
+
+<Callout type="warn">
+Without `mixed-content-secrets`, `SELECT value FROM settings` returns Ghost's Stripe, Mailgun, and signing secrets unredacted under `rules`, and global detection under `full` misses most of them. Delete it only if the assistant never reads `settings`.
+</Callout>
+
+## Trade-offs
+
+- **Indexed ruled columns:** `members.email`, `transient_id`, `users.email`, `invites.email`, `token`, `suppressions.email`, `api_keys.secret`, `sessions.session_id`, `user_sessions.token`, the gift tokens, `tokens.token`, `email_recipients.member_email`, and (`mixed-content`) `verifications.identifier`.
+- **Lookups that stop working:** members, staff, invites, suppressions, and recipients by e-mail; donations and gifts by buyer e-mail; `post_gift_links` to `gift_links` by token.
+- **Join keys that stay unruled:** `id`, every `member_id` and `user_id`, `members.uuid` and `member_uuid`, and `members_stripe_customers.customer_id`.
+
+## Not covered
+
+- `user_sessions.user_agent`, `origin`: browser data, no matching data type.
+- Stripe references (`gifts.stripe_checkout_session_id`, `subscriptions.payment_user_url`): ids and links, not personal by themselves.
+- `referrer_url`, `attribution_url`, `utm_*`: describe the page and campaign, not the person.
+- `emails.from`, `emails.reply_to`, `sender_reply_to`: a name-and-address string or a keyword.
+- `mentions` source columns: public data of third-party sites.
+- `posts`, `post_revisions`, `snippets`, `emails.html`: staff-written content.
+
+## Sources
+
+- TryGhost/Ghost schema at [v6.79.0](https://github.com/TryGhost/Ghost/blob/v6.79.0/ghost/core/server/data/schema/schema.ts) and [v6.0.0](https://github.com/TryGhost/Ghost/blob/v6.0.0/ghost/core/core/server/data/schema/schema.js)
+- [`default-settings.json` at v6.79.0](https://github.com/TryGhost/Ghost/blob/v6.79.0/ghost/core/server/data/schema/default-settings/default-settings.json)
+- [`members-api.js`](https://github.com/TryGhost/Ghost/blob/v6.79.0/ghost/core/server/services/members/members-api/members-api.js), [`session-service.ts`](https://github.com/TryGhost/Ghost/blob/v6.79.0/ghost/core/server/auth/session/session-service.ts), and [`single-use-token-provider.js`](https://github.com/TryGhost/Ghost/blob/v6.79.0/ghost/core/server/services/members/single-use-token-provider.js) at v6.79.0
+- [`config.production.json`](https://github.com/TryGhost/Ghost/blob/v6.79.0/ghost/core/shared/config/env/config.production.json) and [`config.development.json`](https://github.com/TryGhost/Ghost/blob/v6.79.0/ghost/core/shared/config/env/config.development.json) at v6.79.0

@@ -1,0 +1,171 @@
+---
+title: Sylius
+description: Privacy rules for Sylius 2.0 to 2.3 on MySQL, MariaDB, and PostgreSQL
+---
+
+Covers customers, addresses (order addresses included), shop and admin users, orders, reviews, OAuth accounts, payment tokens, and shop billing data of the Sylius 2.x core schema.
+
+## Coverage
+
+- **Versions:** 2.0 to 2.3.
+- **Engines:** MySQL, MariaDB, PostgreSQL.
+- **Table prefix:** the template assumes unprefixed table names. Sylius uses no configurable prefix; its tables carry a fixed `sylius_` name part, already in every key.
+
+## Template
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - sylius_customer.email
+        - sylius_customer.email_canonical
+        - sylius_shop_user.email
+        - sylius_shop_user.email_canonical
+        - sylius_admin_user.email
+        - sylius_admin_user.email_canonical
+        # Shop contact and billing data (optional)
+        - sylius_channel.contact_email
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        # names
+        - sylius_customer.first_name
+        - sylius_customer.last_name
+        - sylius_address.first_name
+        - sylius_address.last_name
+        - sylius_admin_user.first_name
+        - sylius_admin_user.last_name
+        # logins
+        - sylius_shop_user.username
+        - sylius_shop_user.username_canonical
+        - sylius_admin_user.username
+        - sylius_admin_user.username_canonical
+        - sylius_address_log_entries.username
+        - sylius_user_oauth.identifier          # account id at the OAuth provider
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - sylius_customer.phone_number
+        - sylius_address.phone_number
+        # Shop contact and billing data (optional)
+        - sylius_channel.contact_phone_number
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - sylius_address.street
+        - sylius_address.city
+        - sylius_address.province_name
+        # Shop contact and billing data (optional)
+        - sylius_shop_billing_data.street
+        - sylius_shop_billing_data.city
+      entity: LOCATION
+      operator: hash
+    postcodes:
+      columns:
+        - sylius_address.postcode
+        # Shop contact and billing data (optional)
+        - sylius_shop_billing_data.postcode
+      entity: POSTCODE
+      operator: hash
+    companies:
+      columns:
+        - sylius_address.company
+        # Shop contact and billing data (optional)
+        - sylius_shop_billing_data.company
+      entity: ORGANIZATION
+      operator: hash
+    tax-ids:
+      columns:
+        # Shop contact and billing data (optional)
+        - sylius_shop_billing_data.tax_id
+      entity: VAT_NUMBER
+      operator: hash
+    birth-dates:
+      columns:
+        - sylius_customer.birthday
+      entity: DATE_OF_BIRTH
+      operator: replace
+    ip-addresses:
+      columns:
+        - sylius_order.customer_ip
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - sylius_order.notes
+        - sylius_product_review.title
+        - sylius_product_review.comment
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - sylius_shop_user.password
+        - sylius_admin_user.password
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - sylius_shop_user.password_reset_token
+        - sylius_shop_user.email_verification_token
+        - sylius_admin_user.password_reset_token
+        - sylius_admin_user.email_verification_token
+        - sylius_user_oauth.access_token
+        - sylius_user_oauth.refresh_token
+        - sylius_order.token_value              # cart/order token of the Shop API
+        - sylius_payment_security_token.hash    # Payum capture/notify token
+        - sylius_payment_security_token.after_url
+        - sylius_payment_security_token.target_url
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - sylius_payment.details
+        - sylius_payment_request.payload
+        - sylius_payment_request.response_data
+        - sylius_payment_security_token.details
+        - sylius_address_log_entries.data
+        - messenger_messages.body
+        - messenger_messages.headers
+      entity: PERSON
+      operator: replace
+    # Keep: mixed-content columns that hold credentials.
+    mixed-content-secrets:
+      columns:
+        - sylius_gateway_config.config
+      entity: API_KEY
+      operator: redact
+```
+
+**Choices**
+
+- `sylius_order.token_value` lets its holder read and change a guest cart through the Shop API; the Payum token URLs embed the token `hash`. All are `secrets`.
+- `sylius_shop_user.email` is usually empty (`ShopUser` uses `sylius_customer`) but ruled.
+- The shop contact and billing columns (`sylius_channel`, `sylius_shop_billing_data`) matter when a sole trader runs the shop.
+- Optional parts: delete the commented shop columns you do not need and the `mixed-content` rule if the assistant needs those columns readable; keep `mixed-content-secrets` (gateway credentials).
+
+## Trade-offs
+
+- **Indexed ruled columns:** `sylius_customer.email`, `email_canonical`; the shop and admin users' `password_reset_token`, `email_verification_token`; `sylius_order.token_value`, `sylius_payment_security_token.hash`.
+- **Lookups that stop working:** customers, shop users, or admins by e-mail or username; carts by token; orders by IP address.
+- **Join keys that stay unruled:** ids and `*_id` columns, plus `sylius_order.number` and `sylius_product_review.author_id` (a customer id).
+- **Canonical copies:** `email_canonical` and `username_canonical` are lower-cased, so their tokens differ from the original's wherever case differs.
+
+## Not covered
+
+- `gender`, newsletter flag, `roles`, `last_login`, `locale_code`: not identifying alone.
+- `sylius_shipment.tracking`: carrier tracking number; add it to `secrets` if needed.
+- `sylius_promotion_coupon.code`: coupon codes, sometimes single-use per customer.
+- `sylius_adjustment.details`: promotion and tax details, no personal data.
+- Plugin tables (Sylius Plus, invoicing, refunds, gateways): outside the core schema.
+
+## Sources
+
+- [Sylius v2.3.3 MySQL/MariaDB base migration](https://github.com/Sylius/Sylius/blob/8d7541712ee4d379ede236b6917aa86391f05d12/src/Sylius/Bundle/CoreBundle/Migrations/Version20160101092155.php)
+- [Sylius v2.3.3 PostgreSQL base migration](https://github.com/Sylius/Sylius/blob/8d7541712ee4d379ede236b6917aa86391f05d12/src/Sylius/Bundle/CoreBundle/Migrations/Version20160101084139.php)
+- [Sylius v2.3.3 `CoreBundle/Migrations`](https://github.com/Sylius/Sylius/blob/8d7541712ee4d379ede236b6917aa86391f05d12/src/Sylius/Bundle/CoreBundle/Migrations) and [at v2.0.0](https://github.com/Sylius/Sylius/blob/6dd3ca9895be7ab7e6cb71f37af2ef66af17cbe0/src/Sylius/Bundle/CoreBundle/Migrations)
+- [Sylius v2.3.3 Doctrine mappings](https://github.com/Sylius/Sylius/blob/8d7541712ee4d379ede236b6917aa86391f05d12/src/Sylius/Bundle) (`*Bundle/Resources/config/doctrine/**/*.orm.xml`)

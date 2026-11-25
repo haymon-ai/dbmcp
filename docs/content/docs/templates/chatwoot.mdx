@@ -1,0 +1,199 @@
+---
+title: Chatwoot
+description: Privacy rules for Chatwoot 4.x on PostgreSQL
+---
+
+Covers Chatwoot contacts, agents, conversation text, sign-in and audit logs, channel identifiers, and every stored channel and integration secret.
+
+## Coverage
+
+- **Versions:** 4.0.0 to 4.20.1; keys for tables and columns added since 4.0.0 (`companies`, `calls`, `user_sessions`, Copilot, MCP servers and custom tools, newer channels) match nothing on older versions.
+- **Engines:** PostgreSQL.
+- **Table prefix:** the template assumes unprefixed table names. Chatwoot uses no table prefix.
+
+## Template
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - contacts.email
+        - users.email
+        - users.uid
+        - users.unconfirmed_email
+        # Channel identifiers (optional)
+        - channel_email.email
+        - inboxes.email_address
+        - accounts.support_email
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - contacts.name
+        - contacts.middle_name
+        - contacts.last_name
+        - contacts.identifier
+        - contact_inboxes.source_id
+        - users.name
+        - users.display_name
+        - audits.username
+        # Channel identifiers (optional)
+        - channel_email.imap_login
+        - channel_email.smtp_login
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - contacts.phone_number
+        # Channel identifiers (optional)
+        - channel_sms.phone_number
+        - channel_twilio_sms.phone_number
+        - channel_whatsapp.phone_number
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - contacts.location
+        - attachments.coordinates_lat
+        - attachments.coordinates_long
+        - user_sessions.city
+        - audits.city
+      entity: LOCATION
+      operator: hash
+    companies:
+      columns:
+        - companies.name
+        - companies.domain
+      entity: ORGANIZATION
+      operator: hash
+    ip-addresses:
+      columns:
+        - users.current_sign_in_ip
+        - users.last_sign_in_ip
+        - user_sessions.ip_address
+        - audits.remote_address
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - users.message_signature
+        - messages.content
+        - messages.processed_message_content
+        - notes.content
+        - csat_survey_responses.feedback_message
+        - csat_survey_responses.csat_review_notes
+        - calls.transcript
+        - campaign_recipients.message_content
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - users.encrypted_password
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - users.reset_password_token
+        - users.confirmation_token
+        - users.pubsub_token
+        - users.tokens
+        - users.otp_secret
+        - users.otp_backup_codes
+        - access_tokens.token
+        - contact_inboxes.pubsub_token
+        - notification_subscriptions.identifier
+        - notification_subscriptions.subscription_attributes
+        - agent_bots.secret
+        - webhooks.secret
+        - channel_api.hmac_token
+        - channel_api.secret
+        - channel_web_widgets.hmac_token
+        - channel_email.imap_password
+        - channel_email.smtp_password
+        - channel_email.provider_config
+        - channel_facebook_pages.user_access_token
+        - channel_facebook_pages.page_access_token
+        - channel_instagram.access_token
+        - channel_line.line_channel_secret
+        - channel_line.line_channel_token
+        - channel_sms.secret
+        - channel_sms.provider_config
+        - channel_telegram.bot_token
+        - channel_tiktok.access_token
+        - channel_tiktok.refresh_token
+        - channel_twilio_sms.auth_token
+        - channel_twilio_sms.api_key_secret
+        - channel_twitter_profiles.twitter_access_token
+        - channel_twitter_profiles.twitter_access_token_secret
+        - channel_whatsapp.business_management_token
+        - channel_whatsapp.provider_config
+        - integrations_hooks.access_token
+        - integrations_hooks.settings
+        - data_imports.access_token
+        - shopify_custom_apps.client_secret
+        - captain_mcp_servers.auth_config
+        - captain_mcp_servers.oauth_credentials
+        - captain_custom_tools.auth_config
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - contacts.additional_attributes
+        - contacts.custom_attributes
+        - conversations.additional_attributes
+        - conversations.custom_attributes
+        - messages.content_attributes
+        - messages.additional_attributes
+        - companies.additional_attributes
+        - companies.custom_attributes
+        - users.custom_attributes
+        - calls.meta
+        - attachments.meta
+        - notifications.meta
+        - audits.audited_changes
+        - copilot_runs.context
+        - copilot_runs.transcript
+        - copilot_messages.message
+        - copilot_tool_calls.arguments
+        - copilot_tool_calls.result
+        - captain_custom_tools.headers
+        - installation_configs.serialized_value
+      entity: PERSON
+      operator: replace
+```
+
+**Choices**
+
+- `users.uid` holds the e-mail address for password sign-ins (`emails`); `contact_inboxes.source_id` is a contact's channel address (`names`), so its tokens never match `contacts.email`.
+- Credential-only JSON columns (`provider_config`, `integrations_hooks.settings`, `auth_config`, `oauth_credentials`, `subscription_attributes`) are redacted whole under `secrets`.
+- `attachments.coordinates_lat` and `coordinates_long` are ruled as `LOCATION`; their floats come back as tokens.
+- Channel identifiers are the business's own mailbox, numbers, and IMAP/SMTP logins: personal data only when an agent connects a private mailbox or number.
+- Optional parts: delete the commented channel columns you do not need and the `mixed-content` rules if the assistant needs those columns readable.
+
+<Callout type="warn">
+Without the `mixed-content` rules, `installation_configs.serialized_value` returns the Facebook, Azure, and other app secrets a super admin entered.
+</Callout>
+
+## Trade-offs
+
+- **Indexed ruled columns:** `contacts.email`, `phone_number`, `identifier`, `name`; `users.email`, `uid`; `contact_inboxes.source_id`; `companies.name`, `domain`; most token columns; the channel e-mail and phone columns.
+- **Lookups that stop working:** a contact by e-mail, phone, or `identifier`; an agent by e-mail; a contact inbox by `source_id`; trigram search over `messages.content`.
+- **Join keys that stay unruled:** `id` and `<table>_id` columns, such as `contact_id`, `conversations.display_id`, and `messages.sender_type` + `sender_id`.
+
+## Not covered
+
+- `user_sessions.user_agent`, `browser_*`, `device_name`: browser data, no matching data type.
+- `attachments.external_url`, `fallback_title`, `active_storage_blobs.filename`: link titles and file names.
+- `campaign_recipients.error_message`, `data_import_*` errors and metadata: provider and import errors.
+- Captain AI tables (`captain_assistant_responses`, `captain_faq_*`, `captain_documents`): AI text derived from conversations.
+- `custom_filters.query`, `automation_rules.conditions`, `campaigns.audience`: saved filters with literal addresses or names.
+- `canned_responses`, `articles`, `portals`, `email_templates`, `leaves.reason`: agent or help-center text.
+
+## Sources
+
+- [chatwoot/chatwoot `db/schema.rb` at v4.20.1](https://github.com/chatwoot/chatwoot/blob/v4.20.1/db/schema.rb)
+- [chatwoot/chatwoot `db/schema.rb` at v4.0.0](https://github.com/chatwoot/chatwoot/blob/v4.0.0/db/schema.rb)
+- Models at v4.20.1: [`user.rb`](https://github.com/chatwoot/chatwoot/blob/v4.20.1/app/models/user.rb), [`channel/email.rb`](https://github.com/chatwoot/chatwoot/blob/v4.20.1/app/models/channel/email.rb), [`channel/whatsapp.rb`](https://github.com/chatwoot/chatwoot/blob/v4.20.1/app/models/channel/whatsapp.rb), [`channel/sms.rb`](https://github.com/chatwoot/chatwoot/blob/v4.20.1/app/models/channel/sms.rb), [`channel/twilio_sms.rb`](https://github.com/chatwoot/chatwoot/blob/v4.20.1/app/models/channel/twilio_sms.rb), [`integrations/hook.rb`](https://github.com/chatwoot/chatwoot/blob/v4.20.1/app/models/integrations/hook.rb), [`notification_subscription.rb`](https://github.com/chatwoot/chatwoot/blob/v4.20.1/app/models/notification_subscription.rb)
+- Services at v4.20.1: [`base_refresh_oauth_token_service.rb`](https://github.com/chatwoot/chatwoot/blob/v4.20.1/app/services/base_refresh_oauth_token_service.rb), [`enterprise/app/models/captain/mcp_server.rb`](https://github.com/chatwoot/chatwoot/blob/v4.20.1/enterprise/app/models/captain/mcp_server.rb)

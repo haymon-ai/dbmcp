@@ -1,0 +1,32 @@
+{
+  "pages": [
+    "index",
+    "chatwoot",
+    "devise",
+    "discourse",
+    "django",
+    "drupal",
+    "ghost",
+    "gitea",
+    "jtl-shop",
+    "keycloak",
+    "magento",
+    "mastodon",
+    "matomo",
+    "mattermost",
+    "mautic",
+    "moodle",
+    "odoo",
+    "opencart",
+    "orocommerce",
+    "oxid",
+    "prestashop",
+    "saleor",
+    "shopware",
+    "spryker",
+    "supabase-auth",
+    "sylius",
+    "typo3",
+    "woocommerce"
+  ]
+}

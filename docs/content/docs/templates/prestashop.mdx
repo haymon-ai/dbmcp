@@ -1,0 +1,183 @@
+---
+title: PrestaShop
+description: Privacy rules for PrestaShop 1.7.8, 8.2, and 9.0 on MySQL and MariaDB
+---
+
+Covers customers, addresses, employees, customer-service messages, sessions, API credentials, visitor logs, and four common modules; orders point to `address` rows instead of copying them.
+
+## Coverage
+
+- **Versions:** 1.7.8, 8.2, and 9.0; version-only keys carry a comment.
+- **Engines:** MySQL, MariaDB.
+- **Table prefix:** the template assumes unprefixed table names. PrestaShop prefixes every table with `ps_` by default (`database_prefix` in `app/config/parameters.php`); prepend yours to every key.
+
+## Template
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - customer.email
+        - employee.email
+        - customer_thread.email
+        - mail.recipient
+        # Newsletter subscription (ps_emailsubscription) (optional)
+        - emailsubscription.email
+        # Stock alerts (ps_emailalerts) (optional)
+        - mailalert_customer_oos.customer_email
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - customer.firstname
+        - customer.lastname
+        - address.firstname
+        - address.lastname
+        - employee.firstname
+        - employee.lastname
+        - stock_mvt.employee_firstname
+        - stock_mvt.employee_lastname
+        - supply_order_history.employee_firstname
+        - supply_order_history.employee_lastname
+        - supply_order_receipt_history.employee_firstname
+        - supply_order_receipt_history.employee_lastname
+        # Product reviews (productcomments) (optional)
+        - product_comment.customer_name
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - address.phone
+        - address.phone_mobile
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - address.address1
+        - address.address2
+        - address.city
+      entity: LOCATION
+      operator: hash
+    postcodes:
+      columns:
+        - address.postcode
+      entity: POSTCODE
+      operator: hash
+    companies:
+      columns:
+        - customer.company
+        - address.company
+      entity: ORGANIZATION
+      operator: hash
+    tax-ids:
+      columns:
+        - address.vat_number
+        - address.dni
+        - customer.siret
+      entity: VAT_NUMBER
+      operator: hash
+    birth-dates:
+      columns:
+        - customer.birthday
+      entity: DATE_OF_BIRTH
+      operator: replace
+    urls:
+      columns:
+        - customer.website
+        - connections.http_referer
+        - connections_source.http_referer
+        - connections_source.request_uri
+        # Newsletter subscription (ps_emailsubscription) (optional)
+        - emailsubscription.http_referer
+        # 404 log (pagesnotfound) (optional)
+        - pagenotfound.request_uri
+        - pagenotfound.http_referer
+      entity: URL
+      operator: replace
+    ip-addresses:
+      columns:
+        - connections.ip_address
+        - customer.ip_registration_newsletter
+        - customer_message.ip_address
+        # Newsletter subscription (ps_emailsubscription) (optional)
+        - emailsubscription.ip_registration_newsletter
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - customer.note
+        - address.other
+        - customer_message.message
+        - message.message
+        - cart.gift_message
+        - orders.gift_message
+        - orders.note
+        - order_invoice.note
+        - order_return.question
+        # Product reviews (productcomments) (optional)
+        - product_comment.title
+        - product_comment.content
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - customer.passwd
+        - employee.passwd
+        - referrer.passwd             # 1.7 only
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - customer.secure_key
+        - cart.secure_key
+        - orders.secure_key
+        - customer.reset_password_token
+        - employee.reset_password_token
+        - customer_session.token
+        - employee_session.token
+        - customer_thread.token
+        - order_detail.download_hash
+        - webservice_account.key
+        - api_access.client_secret    # 8.1–8.2
+        - api_client.client_secret    # 9.0+
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - cart.checkout_session_data
+        - log.message
+      entity: PERSON
+      operator: replace
+```
+
+**Choices**
+
+- `secure_key` on `customer`, `cart`, and `orders` is a random key carried in order-confirmation and guest-tracking links.
+- `webservice_account.key` and `customer_message.read` are reserved words: the assistant's SQL must quote them with backticks.
+- Optional parts: delete the commented module columns you do not run and the `mixed-content` rules if the assistant needs those columns readable.
+- `emailsubscription` holds newsletter sign-ups without a customer account; account holders' sign-ups are in `customer`.
+
+## Trade-offs
+
+- **Indexed ruled columns:** `customer.email`, `customer.passwd`, `employee.email`, `employee.passwd`, `webservice_account.key`, `mail.recipient`, `connections_source.http_referer`, `connections_source.request_uri`, `mailalert_customer_oos.customer_email`.
+- **Lookups that stop working:** a customer, employee, subscriber, or sent mail by e-mail; a webservice account by key; visits grouped by IP or referrer.
+- **Join keys that stay unruled:** `id_*` columns, such as `id_customer`, `id_address`, and `orders.id_address_delivery`; also `orders.reference`.
+- **IP formats differ:** `connections.ip_address` is a `BIGINT` (`ip2long`), the other IP columns dotted text, so one address gets two tokens.
+
+## Not covered
+
+- `customer.ape`, `last_passwd_gen`, `*.reset_password_validity`: activity code and timestamps.
+- `customer_message.user_agent`, `file_name`, the `guest` table: device details.
+- `connections_source.keywords`: the referring search engine's search terms.
+- `mail.subject`: template subjects.
+- `contact`, `store`, `supplier`, `manufacturer`, `warehouse`: the shop's own contact data.
+- `mutation.mutator_identifier` (9.0): who changed a record.
+
+## Sources
+
+- PrestaShop/PrestaShop `install-dev/data/db_structure.sql` at [1.7.8.11](https://github.com/PrestaShop/PrestaShop/blob/0a0b7c83f3ae4fbbc1aca0ac94332ec3184101f7/install-dev/data/db_structure.sql), [8.2.9](https://github.com/PrestaShop/PrestaShop/blob/3b25e254e9c3b5694c684b74f1b2f13ca79101d4/install-dev/data/db_structure.sql), and [9.0.3](https://github.com/PrestaShop/PrestaShop/blob/fc96d0d4eae383e8c6f1f54f19cf592c221a62e3/install-dev/data/db_structure.sql)
+- PrestaShop/PrestaShop Doctrine entities [`StockMvt`](https://github.com/PrestaShop/PrestaShop/blob/3b25e254e9c3b5694c684b74f1b2f13ca79101d4/src/PrestaShopBundle/Entity/StockMvt.php) and [`ApiAccess`](https://github.com/PrestaShop/PrestaShop/blob/3b25e254e9c3b5694c684b74f1b2f13ca79101d4/src/PrestaShopBundle/Entity/ApiAccess.php) at 8.2.9
+- PrestaShop/autoupgrade [`upgrade/sql/8.1.0.sql`](https://github.com/PrestaShop/autoupgrade/blob/802c811d98d1c6779c388627906f6724c1feca22/upgrade/sql/8.1.0.sql) and [`9.0.0.sql`](https://github.com/PrestaShop/autoupgrade/blob/802c811d98d1c6779c388627906f6724c1feca22/upgrade/sql/9.0.0.sql)
+- Module install code: [ps_emailsubscription v3.0.1](https://github.com/PrestaShop/ps_emailsubscription/blob/0dc8168e5c058adb9e16a72f3bbdbb0b2b36145e/ps_emailsubscription.php), [ps_emailalerts v3.0.1](https://github.com/PrestaShop/ps_emailalerts/blob/19088593fc1fcb11ac06b36923558d6e47a0d324/ps_emailalerts.php), [productcomments v9.0.1](https://github.com/PrestaShop/productcomments/blob/46921bd5860cf8dc91387626634bbc8f2943f023/install.sql), [pagesnotfound v4.0.0](https://github.com/PrestaShop/pagesnotfound/blob/afc944844d7569cba7c40e825fa1f648bf354cc0/pagesnotfound.php)

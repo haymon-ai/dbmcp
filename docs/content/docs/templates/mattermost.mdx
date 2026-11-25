@@ -1,0 +1,454 @@
+---
+title: Mattermost
+description: Privacy rules for Mattermost 10.11 to 12.1 on PostgreSQL, and 10.11 on MySQL
+---
+
+Covers Mattermost users' e-mail addresses, names, usernames, IP addresses, password hashes, session, OAuth, and integration secrets, and message content.
+
+## Coverage
+
+- **Versions:** 10.11 ESR to 12.1.
+- **Engines:** PostgreSQL; MySQL on 10.11 only (11.0 removed it).
+- **Table prefix:** the template assumes unprefixed table names. Mattermost uses no table prefix.
+
+## Template
+
+<Tabs groupId="mattermost-version" persist items={['10.11', '11.0–11.2', '11.3–11.7', '11.8', '11.9–12.1']} defaultIndex={4}>
+<Tab value="10.11">
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - users.email
+        - teams.email
+        - compliances.emails
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - users.username
+        - users.firstname
+        - users.lastname
+        - users.nickname
+        - users.authdata
+        - outgoingoauthconnections.credentialsusername
+      entity: PERSON
+      operator: hash
+    ip-addresses:
+      columns:
+        - audits.ipaddress
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        # Message content (optional)
+        - posts.message
+        - posts.props
+        - drafts.message
+        - drafts.props
+        - scheduledposts.message
+        - scheduledposts.props
+        - fileinfo.content
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - users.password
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - users.mfasecret
+        - sessions.token
+        - sessions.deviceid
+        - useraccesstokens.token
+        - tokens.token
+        - desktoptokens.token
+        - oauthaccessdata.token
+        - oauthaccessdata.refreshtoken
+        - oauthauthdata.code
+        - oauthapps.clientsecret
+        - outgoingoauthconnections.clientsecret
+        - outgoingoauthconnections.credentialspassword
+        - remoteclusters.token
+        - remoteclusters.remotetoken
+        - commands.token
+        - outgoingwebhooks.token
+        - teams.inviteid
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - users.props
+        - users.notifyprops
+        - users.timezone
+        - sessions.props
+        - tokens.extra
+        - audits.extrainfo
+        - pluginkeyvaluestore.pvalue
+      entity: PERSON
+      operator: replace
+```
+
+</Tab>
+<Tab value="11.0–11.2">
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - users.email
+        - teams.email
+        - compliances.emails
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - users.username
+        - users.firstname
+        - users.lastname
+        - users.nickname
+        - users.authdata
+        - outgoingoauthconnections.credentialsusername
+      entity: PERSON
+      operator: hash
+    ip-addresses:
+      columns:
+        - audits.ipaddress
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        # Message content (optional)
+        - posts.message
+        - posts.props
+        - drafts.message
+        - drafts.props
+        - scheduledposts.message
+        - scheduledposts.props
+        - fileinfo.content
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - users.password
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - users.mfasecret
+        - sessions.token
+        - sessions.deviceid
+        - useraccesstokens.token
+        - tokens.token
+        - desktoptokens.token
+        - oauthaccessdata.token
+        - oauthaccessdata.refreshtoken
+        - oauthauthdata.code
+        - oauthapps.clientsecret
+        - outgoingoauthconnections.clientsecret
+        - outgoingoauthconnections.credentialspassword
+        - remoteclusters.token
+        - remoteclusters.remotetoken
+        - commands.token
+        - outgoingwebhooks.token
+        - teams.inviteid
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - users.props
+        - users.notifyprops
+        - users.timezone
+        - sessions.props
+        - tokens.extra
+        - audits.extrainfo
+        - pluginkeyvaluestore.pvalue
+      entity: PERSON
+      operator: replace
+```
+
+</Tab>
+<Tab value="11.3–11.7">
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - users.email
+        - teams.email
+        - compliances.emails
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - users.username
+        - users.firstname
+        - users.lastname
+        - users.nickname
+        - users.authdata
+        - outgoingoauthconnections.credentialsusername
+      entity: PERSON
+      operator: hash
+    ip-addresses:
+      columns:
+        - audits.ipaddress
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        # Message content (optional)
+        - posts.message
+        - posts.props
+        - drafts.message
+        - drafts.props
+        - scheduledposts.message
+        - scheduledposts.props
+        - fileinfo.content
+        - temporaryposts.message
+        - translations.text
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - users.password
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - users.mfasecret
+        - sessions.token
+        - sessions.deviceid
+        - useraccesstokens.token
+        - tokens.token
+        - desktoptokens.token
+        - oauthaccessdata.token
+        - oauthaccessdata.refreshtoken
+        - oauthauthdata.code
+        - oauthapps.clientsecret
+        - outgoingoauthconnections.clientsecret
+        - outgoingoauthconnections.credentialspassword
+        - remoteclusters.token
+        - remoteclusters.remotetoken
+        - commands.token
+        - outgoingwebhooks.token
+        - teams.inviteid
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - users.props
+        - users.notifyprops
+        - users.timezone
+        - sessions.props
+        - tokens.extra
+        - audits.extrainfo
+        - pluginkeyvaluestore.pvalue
+      entity: PERSON
+      operator: replace
+```
+
+</Tab>
+<Tab value="11.8">
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - users.email
+        - teams.email
+        - compliances.emails
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - users.username
+        - users.firstname
+        - users.lastname
+        - users.nickname
+        - users.authdata
+        - outgoingoauthconnections.credentialsusername
+      entity: PERSON
+      operator: hash
+    ip-addresses:
+      columns:
+        - audits.ipaddress
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        # Message content (optional)
+        - posts.message
+        - posts.props
+        - drafts.message
+        - drafts.props
+        - scheduledposts.message
+        - scheduledposts.props
+        - fileinfo.content
+        - temporaryposts.message
+        - translations.text
+        - channeljoinrequests.message
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - users.password
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - users.mfasecret
+        - sessions.token
+        - sessions.deviceid
+        - useraccesstokens.token
+        - tokens.token
+        - desktoptokens.token
+        - oauthaccessdata.token
+        - oauthaccessdata.refreshtoken
+        - oauthauthdata.code
+        - oauthapps.clientsecret
+        - outgoingoauthconnections.clientsecret
+        - outgoingoauthconnections.credentialspassword
+        - remoteclusters.token
+        - remoteclusters.remotetoken
+        - commands.token
+        - outgoingwebhooks.token
+        - teams.inviteid
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - users.props
+        - users.notifyprops
+        - users.timezone
+        - sessions.props
+        - tokens.extra
+        - audits.extrainfo
+        - pluginkeyvaluestore.pvalue
+      entity: PERSON
+      operator: replace
+```
+
+</Tab>
+<Tab value="11.9–12.1">
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - users.email
+        - teams.email
+        - compliances.emails
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - users.username
+        - users.firstname
+        - users.lastname
+        - users.nickname
+        - users.authdata
+        - outgoingoauthconnections.credentialsusername
+      entity: PERSON
+      operator: hash
+    ip-addresses:
+      columns:
+        - audits.ipaddress
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        # Message content (optional)
+        - posts.message
+        - posts.props
+        - drafts.message
+        - drafts.props
+        - scheduledposts.message
+        - scheduledposts.props
+        - fileinfo.content
+        - temporaryposts.message
+        - translations.text
+        - channeljoinrequests.message
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - users.password
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - users.mfasecret
+        - sessions.token
+        - sessions.deviceid
+        - useraccesstokens.token
+        - tokens.token
+        - desktoptokens.token
+        - oauthaccessdata.token
+        - oauthaccessdata.refreshtoken
+        - oauthauthdata.code
+        - oauthapps.clientsecret
+        - outgoingoauthconnections.clientsecret
+        - outgoingoauthconnections.credentialspassword
+        - remoteclusters.token
+        - remoteclusters.remotetoken
+        - commands.token
+        - outgoingwebhooks.token
+        - teams.inviteid
+        - sessions.voipdeviceid
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - users.props
+        - users.notifyprops
+        - users.timezone
+        - sessions.props
+        - tokens.extra
+        - audits.extrainfo
+        - pluginkeyvaluestore.pvalue
+      entity: PERSON
+      operator: replace
+```
+
+</Tab>
+</Tabs>
+
+**Choices**
+
+- `users.authdata` is the user's id at the SSO provider, often the e-mail address under SAML: hashed as `PERSON`.
+- `teams.inviteid` makes up the team invite link; `sessions.deviceid` (and `voipdeviceid`, 11.9+) holds mobile push tokens.
+- `pluginkeyvaluestore.pvalue` can hold per-user plugin credentials; dropping `mixed-content` exposes them.
+- Optional parts: delete the commented message-content columns if the assistant should read posts, and the `mixed-content` rule if it needs those columns readable.
+
+## Trade-offs
+
+- **Indexed ruled columns:** `users.email`, `username`, `authdata`, `nickname`, `firstname`, `lastname`; `useraccesstokens.token`; `tokens.token`; `desktoptokens.token`; `oauthaccessdata.token`, `refreshtoken`; `oauthauthdata.code`; `sessions.token`; `teams.inviteid`; `posts.message`, `fileinfo.content` (message content).
+- **Lookups that stop working:** users by e-mail, username, or name; audit rows by IP; sessions, access tokens, or invites by token; with message content, post search by text.
+- **Join keys that stay unruled:** `users.id` and every `userid`, `audits.sessionid`, `oauthaccessdata.clientid`, `remoteclusters.remoteid`.
+
+## Not covered
+
+- `incomingwebhooks.id`: the webhook URL's secret, and the table's key.
+- `channels.displayname`, `publicchannels.displayname` of group messages: members' usernames.
+- `propertyvalues.value`, `recentsearches.query`: custom profile attributes and users' search terms.
+- `preferences.value`, `channelmembers.notifyprops`, `jobs.data`, `linkmetadata.data`, `views.props`: settings, job parameters, link previews.
+- `fileinfo.name`, `path`, `uploadsessions.filename`: file names that name people.
+- Plugin tables (Playbooks `ir_*`, Boards, Calls): created by each plugin.
+
+## Sources
+
+- mattermost/mattermost PostgreSQL migrations: [v10.11.26](https://github.com/mattermost/mattermost/tree/v10.11.26/server/channels/db/migrations/postgres), [v12.1.0](https://github.com/mattermost/mattermost/tree/v12.1.0/server/channels/db/migrations/postgres)
+- mattermost/mattermost MySQL migrations: [v10.11.26](https://github.com/mattermost/mattermost/tree/v10.11.26/server/channels/db/migrations/mysql); [v11.0.1 has none](https://github.com/mattermost/mattermost/tree/v11.0.1/server/channels/db/migrations)
+- mattermost/mattermost at v12.1.0: [`server/channels/app/email/email.go`](https://github.com/mattermost/mattermost/blob/v12.1.0/server/channels/app/email/email.go), [`server/public/model/session.go`](https://github.com/mattermost/mattermost/blob/v12.1.0/server/public/model/session.go)

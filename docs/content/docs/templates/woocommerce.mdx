@@ -1,0 +1,160 @@
+---
+title: WooCommerce
+description: Privacy rules for WooCommerce 8.2 to 11.3 with HPOS on WordPress, on MySQL and MariaDB
+---
+
+Covers WordPress users and comments, and WooCommerce customers, HPOS orders and addresses, download logs, stock notifications, API keys, webhooks, and payment tokens.
+
+## Coverage
+
+- **Versions:** WooCommerce 8.2 to 11.3 with HPOS, on WordPress 6.4 to 7.1. Stores on post-based orders, or with compatibility mode on, keep order data in `postmeta`: keep the `mixed-content` rules.
+- **Engines:** MySQL, MariaDB.
+- **Table prefix:** the template assumes unprefixed table names. WordPress prefixes every table with `wp_` by default (`$table_prefix` in `wp-config.php`); prepend yours to every key.
+
+## Template
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - users.user_email
+        - comments.comment_author_email
+        - wc_orders.billing_email
+        - wc_order_addresses.email
+        - wc_customer_lookup.email
+        - woocommerce_downloadable_product_permissions.user_email
+        - wc_stock_notifications.user_email   # 10.2+
+        - signups.user_email
+        - registration_log.email
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - users.user_login
+        - users.user_nicename
+        - users.display_name
+        - comments.comment_author
+        - wc_order_addresses.first_name
+        - wc_order_addresses.last_name
+        - wc_customer_lookup.username
+        - wc_customer_lookup.first_name
+        - wc_customer_lookup.last_name
+        - signups.user_login
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - wc_order_addresses.phone
+        - wc_customer_lookup.billing_phone   # 11.2+
+        - wc_customer_lookup.shipping_phone   # 11.2+
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - wc_order_addresses.address_1
+        - wc_order_addresses.address_2
+        - wc_order_addresses.city
+        - wc_customer_lookup.city
+      entity: LOCATION
+      operator: hash
+    postcodes:
+      columns:
+        - wc_order_addresses.postcode
+        - wc_customer_lookup.postcode
+      entity: POSTCODE
+      operator: hash
+    companies:
+      columns:
+        - wc_order_addresses.company
+      entity: ORGANIZATION
+      operator: hash
+    urls:
+      columns:
+        - users.user_url
+        - comments.comment_author_url
+      entity: URL
+      operator: replace
+    ip-addresses:
+      columns:
+        - comments.comment_author_IP
+        - wc_orders.ip_address
+        - wc_download_log.user_ip_address
+        - registration_log.IP
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - comments.comment_content
+        - wc_orders.customer_note
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - users.user_pass
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - users.user_activation_key
+        - signups.activation_key
+        - posts.post_password
+        - wc_order_operational_data.order_key
+        - woocommerce_downloadable_product_permissions.order_key
+        - woocommerce_api_keys.consumer_key
+        - woocommerce_api_keys.consumer_secret
+        - woocommerce_api_keys.truncated_key
+        - woocommerce_payment_tokens.token
+        - wc_webhooks.secret
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - usermeta.meta_value
+        - postmeta.meta_value
+        - wc_orders_meta.meta_value
+        - woocommerce_sessions.session_value
+        - posts.post_excerpt
+        - woocommerce_log.message
+        - woocommerce_log.context
+        - signups.meta
+      entity: PERSON
+      operator: replace
+    # Keep: mixed-content columns that hold credentials.
+    mixed-content-secrets:
+      columns:
+        - options.option_value
+      entity: API_KEY
+      operator: redact
+```
+
+**Choices**
+
+- `comments.comment_content` holds product reviews and order notes (comment type `order_note`) too.
+- `order_key` lets anyone holding it view and pay the order; legacy orders keep it in `posts.post_password`.
+- `woocommerce_api_keys.consumer_key` (a hash of the key) and `truncated_key` (its last seven characters) are redacted with the secret.
+- On multisite, network tables (`users`, `usermeta`, `signups`, `registration_log`, `blogs`) are shared, and each site N has its own tables under `<prefix><N>_` (e.g. `wp_2_wc_orders`): copy the site table keys once per site with that prefix.
+- Optional parts: delete the `mixed-content` rule if the assistant needs those columns readable; keep `mixed-content-secrets`: `options.option_value` holds the SMTP password and extension secrets.
+
+## Trade-offs
+
+- **Indexed ruled columns:** `users.user_login`, `user_nicename`, `user_email`, `comments.comment_author_email`, `wc_orders.billing_email`, `wc_order_addresses.email`, `phone`, `wc_customer_lookup.email`, the `order_key` and `user_email` columns, `woocommerce_api_keys.consumer_key`, `consumer_secret`, the `signups` columns, `registration_log.IP`, and `wc_orders_meta.meta_value` (`mixed-content`).
+- **Lookups that stop working:** customers or orders by e-mail, login, or IP; orders by order key; with `mixed-content`, every `meta_key = … AND meta_value = …` lookup.
+- **Join keys that stay unruled:** `ID`/`id` and the `customer_id`, `order_id`, `user_id` columns, `meta_key`, and `woocommerce_sessions.session_key`.
+
+## Not covered
+
+- `wc_orders.user_agent`, `comments.comment_agent`: browser data, no matching data type.
+- `wc_orders.transaction_id`, `payment_method`: payment references, not personal by themselves.
+- `woocommerce_payment_tokenmeta.meta_value`: card type, last four digits, expiry; no partial-card entity.
+- `woocommerce_order_itemmeta.meta_value`, `order_item_name`: product line data; add-on plugins store customer input there.
+- `sitemeta`: network options, including the network admin e-mail and `site_admins` logins.
+- Extension and Action Scheduler tables: not part of WooCommerce core.
+
+## Sources
+
+- WordPress/wordpress-develop `src/wp-admin/includes/schema.php` at [7.1.5](https://github.com/WordPress/wordpress-develop/blob/7.1.5/src/wp-admin/includes/schema.php) and [6.4.0](https://github.com/WordPress/wordpress-develop/blob/6.4.0/src/wp-admin/includes/schema.php)
+- woocommerce/woocommerce `OrdersTableDataStore.php` at [11.3.1](https://github.com/woocommerce/woocommerce/blob/11.3.1/plugins/woocommerce/src/Internal/DataStores/Orders/OrdersTableDataStore.php) and [8.2.0](https://github.com/woocommerce/woocommerce/blob/8.2.0/plugins/woocommerce/src/Internal/DataStores/Orders/OrdersTableDataStore.php)
+- woocommerce/woocommerce `class-wc-install.php` at [11.3.1](https://github.com/woocommerce/woocommerce/blob/11.3.1/plugins/woocommerce/includes/class-wc-install.php), [11.2.0](https://github.com/woocommerce/woocommerce/blob/11.2.0/plugins/woocommerce/includes/class-wc-install.php), [10.5.0](https://github.com/woocommerce/woocommerce/blob/10.5.0/plugins/woocommerce/includes/class-wc-install.php), and [8.2.0](https://github.com/woocommerce/woocommerce/blob/8.2.0/plugins/woocommerce/includes/class-wc-install.php)
+- woocommerce/woocommerce [`StockNotificationsDataStore.php` at 11.3.1](https://github.com/woocommerce/woocommerce/blob/11.3.1/plugins/woocommerce/src/Internal/DataStores/StockNotifications/StockNotificationsDataStore.php)

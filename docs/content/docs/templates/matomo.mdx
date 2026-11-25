@@ -1,0 +1,190 @@
+---
+title: Matomo
+description: Privacy rules for Matomo 5 on MySQL and MariaDB
+---
+
+Covers visitor IPs, visitor and fingerprint ids, User IDs, and geolocation in the visit logs, plus Matomo users' logins, e-mail addresses, and secrets.
+
+## Coverage
+
+- **Versions:** 5.0 to 5.14.
+- **Engines:** MySQL, MariaDB.
+- **Table prefix:** the template assumes unprefixed table names. Matomo prefixes every table with `matomo_` by default (`tables_prefix` in `config/config.ini.php`); prepend yours to every key.
+
+## Template
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - user.email
+        - report_subscriptions.email
+        # CustomAlerts (optional)
+        - alert.additional_emails
+        - alert_triggered.additional_emails
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - log_visit.idvisitor
+        - log_visit.config_id
+        - log_visit.user_id
+        - log_link_visit_action.idvisitor
+        - log_conversion.idvisitor
+        - log_conversion_item.idvisitor
+        - user.login
+        - user.invited_by
+        - user_token_auth.login
+        - twofactor_recovery_code.login
+        - access.login
+        - site.creator_login
+        - plugin_setting.user_login
+        - brute_force_log.login
+        - annotations.user
+        - report.login
+        - segment.login
+        - user_dashboard.login
+        - user_language.login
+        - privacy_logdata_anonymizations.requester
+        # CustomAlerts (optional)
+        - alert.login
+        - alert_triggered.login
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        # CustomAlerts (optional)
+        - alert.phone_numbers
+        - alert_triggered.phone_numbers
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - log_visit.location_city
+        - log_visit.location_latitude
+        - log_visit.location_longitude
+        - log_conversion.location_city
+        - log_conversion.location_latitude
+        - log_conversion.location_longitude
+      entity: LOCATION
+      operator: hash
+    ip-addresses:
+      columns:
+        - log_visit.location_ip
+        - brute_force_log.ip_address
+      entity: IP_ADDRESS
+      operator: hash
+    passwords:
+      columns:
+        - user.password
+        - user.invite_token
+        - user.invite_link_token
+        - user_token_auth.password
+        - session.id
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - user.twofactor_secret
+        - twofactor_recovery_code.recovery_code
+        - report_subscriptions.token
+        # CustomAlerts (optional)
+        - alert.ms_teams_webhook_url
+        - alert_triggered.ms_teams_webhook_url
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - log_visit.referer_url
+        - log_visit.referer_keyword
+        - log_conversion.url
+        - log_conversion.referer_keyword
+        - log_action.name
+        - tracking_failure.request_url
+        - session.data
+        - logger_message.message
+        - plugin_setting.setting_value
+        - site_setting.setting_value
+        - report.parameters
+        - log_visit.custom_dimension_1
+        - log_visit.custom_dimension_2
+        - log_visit.custom_dimension_3
+        - log_visit.custom_dimension_4
+        - log_visit.custom_dimension_5
+        - log_visit.custom_var_k1
+        - log_visit.custom_var_v1
+        - log_visit.custom_var_k2
+        - log_visit.custom_var_v2
+        - log_visit.custom_var_k3
+        - log_visit.custom_var_v3
+        - log_visit.custom_var_k4
+        - log_visit.custom_var_v4
+        - log_visit.custom_var_k5
+        - log_visit.custom_var_v5
+        - log_link_visit_action.custom_dimension_1
+        - log_link_visit_action.custom_dimension_2
+        - log_link_visit_action.custom_dimension_3
+        - log_link_visit_action.custom_dimension_4
+        - log_link_visit_action.custom_dimension_5
+        - log_link_visit_action.custom_var_k1
+        - log_link_visit_action.custom_var_v1
+        - log_link_visit_action.custom_var_k2
+        - log_link_visit_action.custom_var_v2
+        - log_link_visit_action.custom_var_k3
+        - log_link_visit_action.custom_var_v3
+        - log_link_visit_action.custom_var_k4
+        - log_link_visit_action.custom_var_v4
+        - log_link_visit_action.custom_var_k5
+        - log_link_visit_action.custom_var_v5
+        - log_conversion.custom_dimension_1
+        - log_conversion.custom_dimension_2
+        - log_conversion.custom_dimension_3
+        - log_conversion.custom_dimension_4
+        - log_conversion.custom_dimension_5
+        - log_conversion.custom_var_k1
+        - log_conversion.custom_var_v1
+        - log_conversion.custom_var_k2
+        - log_conversion.custom_var_v2
+        - log_conversion.custom_var_k3
+        - log_conversion.custom_var_v3
+        - log_conversion.custom_var_k4
+        - log_conversion.custom_var_v4
+        - log_conversion.custom_var_k5
+        - log_conversion.custom_var_v5
+      entity: PERSON
+      operator: replace
+```
+
+**Choices**
+
+- `idvisitor` and `config_id` are the visitor id and fingerprint, ruled `PERSON` like logins.
+- `location_ip` is binary, so its token differs from `brute_force_log.ip_address` for the same IP; `INET6_NTOA(location_ip)` returns a placeholder.
+- `user_token_auth.password`, `invite_token`, `invite_link_token`, and `session.id` hold salted token hashes, hence `PASSWORD_HASH`. CustomAlerts' Teams webhook URLs carry a secret, hence `secrets`.
+- Optional parts: delete the CustomAlerts columns if you removed that plugin, and the `mixed-content` rule to keep those columns readable.
+- `mixed-content` lists `custom_dimension_1` to `5` and `custom_var_*`; match them to your configured dimensions.
+
+## Trade-offs
+
+- **Indexed ruled columns:** `user.login`, `user.email`, `user_token_auth.password`, `report_subscriptions.token`, `report_subscriptions.email`, `user_dashboard.login`, `user_language.login`, `session.id`, `log_visit.config_id`, `log_visit.idvisitor`, `access.login`, `plugin_setting.user_login`, `brute_force_log.ip_address`.
+- **Lookups that stop working:** visitors by IP, `idvisitor`, or User ID (Visitor Profile, GDPR tool); users by login or e-mail; visits by city.
+- **Join keys that stay unruled:** ids, such as `idvisit`, `idsite`, and `idaction_*`.
+- **No user id:** Matomo users have no numeric id, so the user tables join only on the ruled `login`.
+
+## Not covered
+
+- `log_visit` region, country, browser language, and device columns: coarse, though they add to fingerprinting.
+- `option.option_value`: core and plugin options, too broad to rule.
+- `annotations.note`, `segment.definition`, `report.description`: text written by Matomo users.
+- `archive_blob.value`, `archive_numeric`: aggregates with URLs and custom values.
+- Tag Manager, QueuedTracking, LoginLdap: tables not mapped.
+- Heatmaps, Session Recording, Forms, Funnels (premium): tables not mapped.
+
+## Sources
+
+- matomo-org/matomo 5.14.3 [`core/Db/Schema/`](https://github.com/matomo-org/matomo/tree/5.14.3/core/Db/Schema)
+- matomo-org/matomo 5.14.3 [`plugins/`](https://github.com/matomo-org/matomo/tree/5.14.3/plugins) (dimension columns and plugin tables)
+- matomo-org/matomo 5.14.3 [`core/Updates/`](https://github.com/matomo-org/matomo/tree/5.14.3/core/Updates)
+- matomo-org/matomo 5.14.3 [`tests/resources/OmniFixture-dump.sql`](https://github.com/matomo-org/matomo/blob/5.14.3/tests/resources/OmniFixture-dump.sql)
+- matomo-org/plugin-CustomAlerts [`Model.php` @ 06bb3c7](https://github.com/matomo-org/plugin-CustomAlerts/blob/06bb3c73f17354dc9f551c3c5369ac2b603577c2/Model.php)

@@ -1,0 +1,245 @@
+---
+title: OpenCart
+description: Privacy rules for OpenCart 3.0 and 4.0 to 4.1 on MySQL and MariaDB
+---
+
+Covers customer accounts, addresses, orders, returns, reviews, blog comments, vouchers, affiliates, admin and API users, login and IP logs, and tokens.
+
+## Coverage
+
+- **Versions:** 3.0.3.9 to 3.0.5.1 and 4.0.0.0 to 4.1.0.4; version-only keys carry a comment.
+- **Engines:** MySQL, MariaDB.
+- **Table prefix:** the template assumes unprefixed table names. OpenCart prefixes every table with `oc_` by default (`DB_PREFIX` in `config.php`); prepend yours to every key.
+
+## Template
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - customer.email
+        - customer_login.email
+        - customer_affiliate.paypal
+        - order.email
+        - return.email
+        - user.email
+        - gdpr.email                 # 4.0+
+        - voucher.from_email         # 3.0–4.0
+        - voucher.to_email           # 3.0–4.0
+        - order_voucher.from_email   # 3.0–4.0
+        - order_voucher.to_email     # 3.0–4.0
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - customer.firstname
+        - customer.lastname
+        - address.firstname
+        - address.lastname
+        - order.firstname
+        - order.lastname
+        - order.payment_firstname
+        - order.payment_lastname
+        - order.shipping_firstname
+        - order.shipping_lastname
+        - return.firstname
+        - return.lastname
+        - review.author
+        - customer_affiliate.cheque
+        - customer_affiliate.bank_account_name
+        - user.username
+        - user.firstname
+        - user.lastname
+        - api.username
+        - article_comment.author     # 4.1+
+        - voucher.from_name          # 3.0–4.0
+        - voucher.to_name            # 3.0–4.0
+        - order_voucher.from_name    # 3.0–4.0
+        - order_voucher.to_name      # 3.0–4.0
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - customer.telephone
+        - order.telephone
+        - return.telephone
+        - customer.fax               # 3.0 only
+        - order.fax                  # 3.0 only
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - address.address_1
+        - address.address_2
+        - address.city
+        - order.payment_address_1
+        - order.payment_address_2
+        - order.payment_city
+        - order.shipping_address_1
+        - order.shipping_address_2
+        - order.shipping_city
+      entity: LOCATION
+      operator: hash
+    postcodes:
+      columns:
+        - address.postcode
+        - order.payment_postcode
+        - order.shipping_postcode
+      entity: POSTCODE
+      operator: hash
+    companies:
+      columns:
+        - address.company
+        - order.payment_company
+        - order.shipping_company
+        - customer_affiliate.company
+        - customer_affiliate.bank_name
+      entity: ORGANIZATION
+      operator: hash
+    tax-ids:
+      columns:
+        - customer_affiliate.tax
+      entity: VAT_NUMBER
+      operator: hash
+    bank-accounts:
+      columns:
+        - customer_affiliate.bank_account_number
+        - customer_affiliate.bank_branch_number
+        - customer_affiliate.bank_swift_code
+      entity: IBAN_CODE
+      operator: hash
+    urls:
+      columns:
+        - customer_online.url
+        - customer_online.referer
+        - customer_affiliate.website
+      entity: URL
+      operator: replace
+    ip-addresses:
+      columns:
+        - customer.ip
+        - customer_ip.ip
+        - customer_login.ip
+        - customer_online.ip
+        - customer_activity.ip
+        - customer_search.ip
+        - order.ip
+        - order.forwarded_ip
+        - user.ip
+        - api_ip.ip
+        - api_session.ip             # 3.0–4.0
+        - api_history.ip             # 4.1+
+        - customer_affiliate_report.ip  # 4.0+
+        - customer_authorize.ip      # 4.1+
+        - user_login.ip              # 4.0.1+
+        - user_authorize.ip          # 4.0.2+
+        - subscription.ip            # 4.0.2 only
+        - subscription.forwarded_ip  # 4.0.2 only
+        - article_comment.ip         # 4.1+
+        - article_rating.ip          # 4.1+
+        - download_report.ip         # 4.0+
+        - marketing_report.ip        # 4.0+
+        - product_report.ip          # 4.0+
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - order.comment
+        - order_history.comment
+        - return.comment
+        - return_history.comment
+        - review.text
+        - customer_history.comment
+        - customer_transaction.description
+        - customer_reward.description
+        - article_comment.comment    # 4.0.2+
+        - subscription.comment       # 4.0.2+
+        - subscription_history.comment  # 4.0+
+        - voucher.message            # 3.0–4.0
+        - order_voucher.message      # 3.0–4.0
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - customer.password
+        - user.password
+        - customer.salt              # 3.0 only
+        - user.salt                  # 3.0 only
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - customer.token
+        - customer.code
+        - user.code                  # 3.0–4.1.0.0
+        - api.key
+        - session.session_id
+        - cart.session_id
+        - api_session.session_id     # 3.0–4.0
+        - gdpr.code                  # 4.0+
+        - customer_payment.token     # 4.0.0–4.0.1
+        - customer_authorize.token   # 4.1+
+        - customer_token.code        # 4.1.0.1+
+        - user_login.token           # 4.0.1 only
+        - user_authorize.token       # 4.0.2+
+        - user_token.code            # 4.1.0.1+
+        - voucher.code               # 3.0–4.0
+        - order_voucher.code         # 3.0–4.0
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - customer.custom_field
+        - address.custom_field
+        - order.custom_field
+        - order.payment_custom_field
+        - order.shipping_custom_field
+        - customer_affiliate.custom_field
+        - customer_activity.data
+        - order_option.value
+        - subscription_option.value  # 4.1+
+        - cart.option
+        - customer_search.keyword
+      entity: PERSON
+      operator: replace
+    # Keep: mixed-content columns that hold credentials.
+    mixed-content-secrets:
+      columns:
+        - session.data
+        - setting.value
+      entity: API_KEY
+      operator: redact
+```
+
+**Choices**
+
+- `customer.code`, `user.code`, `gdpr.code`, and the `*_token.code` columns are reset, login, and GDPR confirmation codes; `customer.token` logs an admin in as the customer.
+- Voucher codes are `API_KEY`: they can be redeemed. `customer.salt` and `user.salt` (3.0) are part of the password hash.
+- `customer_affiliate.paypal` is the affiliate's PayPal e-mail address; `cheque` is the payee name.
+- Optional parts: delete the `mixed-content` rule if the assistant needs custom field answers, product options, or search keywords readable.
+- `mixed-content-secrets` covers `session.data` (the admin `user_token`) and `setting.value` (SMTP password, extension API keys); keep it.
+
+## Trade-offs
+
+- **Indexed ruled columns:** `customer_login.email`, `customer_login.ip`, `customer_ip.ip`, `customer_online.ip`, `session.session_id`, `cart.session_id`; `customer.email` and `order.email` on 4.1.
+- **Lookups that stop working:** a customer or order by e-mail, orders from an IP, failed logins (`customer_login`), carts matched to their session.
+- **Join keys that stay unruled:** `*_id` columns, such as `customer_id`, `order_id`, and `address_id`.
+
+## Not covered
+
+- `order.payment_country`, `payment_zone`, `shipping_country`, `shipping_zone`: country and region names.
+- `user_agent` and `accept_language` columns: browser data, no matching data type.
+- `order.payment_method`, `shipping_method`, `transaction_id`, `tracking`, shipment references: not personal by themselves.
+- `customer_payment.name` (4.0.0–4.0.1): a saved payment method's label.
+- `upload.name`, `upload.filename`, `user.image`: file names and avatar path.
+- `location`, `store`: the business's own address and phone.
+
+## Sources
+
+- [opencart/opencart 4.1.0.4 `upload/system/helper/db_schema.php`](https://github.com/opencart/opencart/blob/4.1.0.4/upload/system/helper/db_schema.php)
+- [opencart/opencart 4.0.2.3 `upload/system/helper/db_schema.php`](https://github.com/opencart/opencart/blob/4.0.2.3/upload/system/helper/db_schema.php)
+- [opencart/opencart 4.0.0.0 `upload/system/helper/db_schema.php`](https://github.com/opencart/opencart/blob/4.0.0.0/upload/system/helper/db_schema.php)
+- [opencart/opencart 3.0.5.1 `upload/install/opencart.sql`](https://github.com/opencart/opencart/blob/3.0.5.1/upload/install/opencart.sql)
+- [opencart/opencart 3.0.3.9 `upload/install/opencart.sql`](https://github.com/opencart/opencart/blob/3.0.3.9/upload/install/opencart.sql)
