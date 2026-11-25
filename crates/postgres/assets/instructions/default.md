@@ -9,4 +9,5 @@ Tools default to the active database; pass `database` to target another.
 
 ## Constraints
 
+- While column rules (`privacy.rules`) exist, `write` refuses `CREATE DATABASE`, `DROP DATABASE`, and `DROP … CASCADE`.
 - Multi-statement queries are not supported. Send one statement per request.

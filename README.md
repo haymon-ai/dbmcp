@@ -229,7 +229,7 @@ Executes a read-only SQL query (SELECT, SHOW, DESCRIBE, EXPLAIN). Always enforce
 
 ### write
 
-Executes a write SQL query (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP), including database and table DDL such as `CREATE DATABASE`, `DROP DATABASE`, and `DROP TABLE`. Only available when read-only mode is disabled. Parameters: `query`, `database`.
+Executes a write SQL query (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP), including database and table DDL such as `CREATE DATABASE`, `DROP DATABASE`, and `DROP TABLE`; while column rules exist, `CREATE DATABASE`, `DROP DATABASE`, and `DROP … CASCADE` are refused. Only available when read-only mode is disabled. Parameters: `query`, `database`.
 
 ### explain
 

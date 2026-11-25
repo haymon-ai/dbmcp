@@ -25,7 +25,7 @@ List the objects of one kind, one page at a time. Results are paginated — see 
 | `materialized_view` | No | Yes | No |
 | `database` | Yes, unless pinned | Yes, unless pinned | No |
 
-PostgreSQL restricts every kind except `database` to the `public` schema. `database` and SQLite's `view` list names only and reject `search` and `detail: "full"`.
+PostgreSQL restricts every kind except `database` to the `public` schema. `database` and SQLite's `view` list names only and reject `search` and `detail: "full"`; `database` lists the whole server and also rejects the `database` parameter.
 
 ## Response
 
@@ -38,7 +38,7 @@ With `detail: "names"` the response is a sorted JSON array of names:
 }
 ```
 
-With `detail: "full"` the response is an object keyed by name; the name is the key only and is not repeated inside the value.:
+With `detail: "full"` the response is an object keyed by name; the name is the key only and is not repeated inside the value:
 
 ```json
 {
