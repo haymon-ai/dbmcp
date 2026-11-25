@@ -1,8 +1,9 @@
-//! MCP tool definitions for the `PostgreSQL` backend.
+//! MCP tool shapes for the `PostgreSQL` backend.
 //!
-//! Each tool is defined in its own submodule as a ZST that implements
+//! Each tool is a ZST in its own submodule that implements
 //! [`ToolBase`](rmcp::handler::server::router::tool::ToolBase) and
-//! [`AsyncTool`](rmcp::handler::server::router::tool::AsyncTool).
+//! [`AsyncTool`](rmcp::handler::server::router::tool::AsyncTool). Its `invoke`
+//! forwards to the handler method in [`operations`](crate::operations).
 //! Router assembly happens in [`crate::handler`].
 
 mod explain;

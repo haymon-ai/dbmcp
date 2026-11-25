@@ -5,6 +5,7 @@
 
 mod connection;
 mod handler;
+mod operations;
 mod policy;
 mod queries;
 mod tools;
