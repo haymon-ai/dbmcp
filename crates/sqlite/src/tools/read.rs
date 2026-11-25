@@ -17,7 +17,7 @@ use dbmcp_policy::Access;
 
 const NAME: &str = "read";
 const TITLE: &str = "Read";
-const DESCRIPTION: &str = include_str!("../../assets/tools/read.md");
+const DESCRIPTION: &str = include_str!("../../assets/tools/read/default.md");
 
 /// Marker type for the `read` MCP tool.
 pub(crate) struct ReadTool;

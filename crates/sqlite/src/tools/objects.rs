@@ -9,7 +9,7 @@ use crate::types::{ListObjectsResponse, ObjectKind, ObjectsRequest};
 
 const NAME: &str = "objects";
 const TITLE: &str = "Objects";
-const DESCRIPTION: &str = include_str!("../../assets/tools/objects.md");
+const DESCRIPTION: &str = include_str!("../../assets/tools/objects/default.md");
 
 fn annotations() -> ToolAnnotations {
     ToolAnnotations::new()

@@ -11,7 +11,7 @@ use dbmcp_policy::Access;
 
 const NAME: &str = "write";
 const TITLE: &str = "Write";
-const DESCRIPTION: &str = include_str!("../../assets/tools/write.md");
+const DESCRIPTION: &str = include_str!("../../assets/tools/write/default.md");
 
 /// Marker type for the `write` MCP tool.
 pub(crate) struct WriteTool;

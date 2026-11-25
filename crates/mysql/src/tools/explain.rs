@@ -14,7 +14,7 @@ use dbmcp_policy::Access;
 
 const NAME: &str = "explain";
 const TITLE: &str = "Explain";
-const DESCRIPTION: &str = include_str!("../../assets/tools/explain.md");
+const DESCRIPTION: &str = include_str!("../../assets/tools/explain/default.md");
 
 fn annotations() -> ToolAnnotations {
     ToolAnnotations::new()

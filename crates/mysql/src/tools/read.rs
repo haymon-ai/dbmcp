@@ -16,8 +16,8 @@ use dbmcp_policy::Access;
 
 const NAME: &str = "read";
 const TITLE: &str = "Read";
-const DESCRIPTION_PINNED: &str = include_str!("../../assets/tools/read/pinned.md");
-const DESCRIPTION_UNPINNED: &str = include_str!("../../assets/tools/read/unpinned.md");
+const DESCRIPTION_PINNED: &str = include_str!("../../assets/tools/read/default.pinned.md");
+const DESCRIPTION_UNPINNED: &str = include_str!("../../assets/tools/read/default.md");
 
 fn annotations() -> ToolAnnotations {
     ToolAnnotations::new()

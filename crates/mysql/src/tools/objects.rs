@@ -9,8 +9,8 @@ use crate::types::{ListObjectsResponse, ObjectKind, ObjectsRequest};
 
 const NAME: &str = "objects";
 const TITLE: &str = "Objects";
-const DESCRIPTION_PINNED: &str = include_str!("../../assets/tools/objects/pinned.md");
-const DESCRIPTION_UNPINNED: &str = include_str!("../../assets/tools/objects/unpinned.md");
+const DESCRIPTION_PINNED: &str = include_str!("../../assets/tools/objects/default.pinned.md");
+const DESCRIPTION_UNPINNED: &str = include_str!("../../assets/tools/objects/default.md");
 
 fn annotations() -> ToolAnnotations {
     ToolAnnotations::new()

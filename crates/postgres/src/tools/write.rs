@@ -10,8 +10,8 @@ use dbmcp_policy::Access;
 
 const NAME: &str = "write";
 const TITLE: &str = "Write";
-const DESCRIPTION_PINNED: &str = include_str!("../../assets/tools/write/pinned.md");
-const DESCRIPTION_UNPINNED: &str = include_str!("../../assets/tools/write/unpinned.md");
+const DESCRIPTION_PINNED: &str = include_str!("../../assets/tools/write/default.pinned.md");
+const DESCRIPTION_UNPINNED: &str = include_str!("../../assets/tools/write/default.md");
 
 fn annotations() -> ToolAnnotations {
     ToolAnnotations::new()
