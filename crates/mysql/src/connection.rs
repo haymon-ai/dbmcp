@@ -75,6 +75,13 @@ impl MysqlConnection {
         self.config.name.as_deref().filter(|n| !n.is_empty()).unwrap_or("")
     }
 
+    /// Evicts the cached pool for `name`, closing its connections.
+    ///
+    /// Idempotent — does nothing if the pool was not cached.
+    pub(crate) async fn invalidate(&self, name: &str) {
+        self.pools.invalidate(name).await;
+    }
+
     /// Closes every cached pool, awaiting each clean shutdown.
     ///
     /// Idempotent — `MySqlPool::close` is safe to call more than once.

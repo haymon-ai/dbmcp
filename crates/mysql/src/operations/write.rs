@@ -8,6 +8,9 @@ use dbmcp_sql::Connection as _;
 use dbmcp_sql::validation::validate_write;
 use dbmcp_truncate::{Window, fit};
 use rmcp::model::ErrorData;
+use sqlparser::ast::{ObjectType, Statement};
+use sqlparser::dialect::MySqlDialect;
+use sqlparser::parser::Parser;
 
 use crate::MysqlHandler;
 
@@ -33,7 +36,7 @@ impl MysqlHandler {
     /// [`SqlError::UnreadableCharacter`]: dbmcp_sql::SqlError::UnreadableCharacter
     /// [`SqlError::UseBlocked`]: dbmcp_sql::SqlError::UseBlocked
     pub async fn write(&self, query: String, database: Option<String>) -> Result<WriteResponse, ErrorData> {
-        validate_write(&query, &sqlparser::dialect::MySqlDialect {})?;
+        validate_write(&query, &MySqlDialect {})?;
 
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
@@ -57,6 +60,9 @@ impl MysqlHandler {
                 .map_err(|error| ErrorData::internal_error(error.to_string(), None))?;
             (rows, rows_affected, last_insert_id)
         };
+        if let Some(name) = dropped_database(&query) {
+            self.connection.invalidate(&name).await;
+        }
         let fitted = fit(rows, caps);
 
         Ok(WriteResponse {
@@ -65,5 +71,46 @@ impl MysqlHandler {
             last_insert_id,
             truncation: Truncation::new(fitted.cut, fitted.dropped.saturating_add(window.rest)),
         })
+    }
+}
+
+/// Names the database a `DROP DATABASE` (or `DROP SCHEMA`) statement drops.
+///
+/// Its cached pool must go: idle sessions would keep a dropped default
+/// database, and a recreated database of that name would fail with
+/// "No database selected".
+fn dropped_database(sql: &str) -> Option<String> {
+    let statements = Parser::parse_sql(&MySqlDialect {}, sql).ok()?;
+    let [
+        Statement::Drop {
+            object_type: ObjectType::Database | ObjectType::Schema,
+            names,
+            ..
+        },
+    ] = statements.as_slice()
+    else {
+        return None;
+    };
+    let [name] = names.as_slice() else {
+        return None;
+    };
+    name.0.last()?.as_ident().map(|ident| ident.value.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dropped_database;
+
+    #[test]
+    fn names_the_dropped_database() {
+        assert_eq!(dropped_database("DROP DATABASE tmp").as_deref(), Some("tmp"));
+        assert_eq!(dropped_database("DROP SCHEMA IF EXISTS `Tmp`").as_deref(), Some("Tmp"));
+    }
+
+    #[test]
+    fn ignores_other_statements() {
+        assert_eq!(dropped_database("DROP TABLE tmp"), None);
+        assert_eq!(dropped_database("CREATE DATABASE tmp"), None);
+        assert_eq!(dropped_database("not sql"), None);
     }
 }

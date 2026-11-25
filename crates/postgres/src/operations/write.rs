@@ -7,6 +7,9 @@ use dbmcp_server::types::WriteResponse;
 use dbmcp_sql::Connection as _;
 use dbmcp_truncate::{Window, fit};
 use rmcp::model::ErrorData;
+use sqlparser::ast::{ObjectType, Statement};
+use sqlparser::dialect::PostgreSqlDialect;
+use sqlparser::parser::Parser;
 
 use crate::PostgresHandler;
 
@@ -43,6 +46,9 @@ impl PostgresHandler {
                 .map_err(|error| ErrorData::internal_error(error.to_string(), None))?;
             (rows, rows_affected, last_insert_id)
         };
+        if let Some(name) = dropped_database(&query) {
+            self.connection.invalidate(&name).await;
+        }
         let fitted = fit(rows, caps);
 
         Ok(WriteResponse {
@@ -51,5 +57,53 @@ impl PostgresHandler {
             last_insert_id,
             truncation: Truncation::new(fitted.cut, fitted.dropped.saturating_add(window.rest)),
         })
+    }
+}
+
+/// Names the database a `DROP DATABASE` statement drops, folded as the server does.
+///
+/// Its cached pool must go, so a recreated database of that name gets
+/// fresh connections.
+fn dropped_database(sql: &str) -> Option<String> {
+    let statements = Parser::parse_sql(&PostgreSqlDialect {}, sql).ok()?;
+    let [
+        Statement::Drop {
+            object_type: ObjectType::Database,
+            names,
+            ..
+        },
+    ] = statements.as_slice()
+    else {
+        return None;
+    };
+    let [name] = names.as_slice() else {
+        return None;
+    };
+    let ident = name.0.last()?.as_ident()?;
+    Some(if ident.quote_style.is_some() {
+        ident.value.clone()
+    } else {
+        ident.value.to_lowercase()
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dropped_database;
+
+    #[test]
+    fn names_the_dropped_database() {
+        assert_eq!(dropped_database("DROP DATABASE Tmp").as_deref(), Some("tmp"));
+        assert_eq!(
+            dropped_database(r#"DROP DATABASE IF EXISTS "Tmp""#).as_deref(),
+            Some("Tmp")
+        );
+    }
+
+    #[test]
+    fn ignores_other_statements() {
+        assert_eq!(dropped_database("DROP TABLE tmp"), None);
+        assert_eq!(dropped_database("DROP SCHEMA tmp"), None);
+        assert_eq!(dropped_database("not sql"), None);
     }
 }
