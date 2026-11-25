@@ -1,10 +1,4 @@
-//! MCP tool shapes for the `SQLite` backend.
-//!
-//! Each tool is a ZST in its own submodule that implements
-//! [`ToolBase`](rmcp::handler::server::router::tool::ToolBase) and
-//! [`AsyncTool`](rmcp::handler::server::router::tool::AsyncTool). Its `invoke`
-//! forwards to the handler method in [`operations`](crate::operations).
-//! Router assembly happens in [`crate::handler`].
+//! MCP tool shapes; each `invoke` forwards to [`operations`](crate::operations).
 
 mod explain;
 mod objects;

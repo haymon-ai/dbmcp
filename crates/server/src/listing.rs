@@ -25,7 +25,7 @@ use serde::de::{Error as DeError, Unexpected};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
-use crate::types::ListObjectsResponse;
+use crate::types::{Detail, ListObjectsResponse};
 
 /// Wire-format payload carried inside an encoded [`Cursor`].
 #[derive(Serialize, Deserialize)]
@@ -147,7 +147,7 @@ pub async fn paginate<T, E>(
 /// Fetches one page of a brief/detailed `objects` tool response.
 ///
 /// Trims `search` and drops it when blank, then runs `brief` or `full`
-/// depending on `detailed`. Both closures receive the [`Page`] and the
+/// depending on `detail`. Both closures receive the [`Page`] and the
 /// normalised search pattern; `brief` returns entity names, `full`
 /// returns name → metadata pairs in the SQL `ORDER BY` order. Paging
 /// follows [`paginate`].
@@ -159,13 +159,13 @@ pub async fn list_objects<E>(
     cursor: Option<Cursor>,
     page_size: u16,
     search: Option<&str>,
-    detailed: bool,
+    detail: Detail,
     brief: impl AsyncFnOnce(Page, Option<&str>) -> Result<Vec<String>, E>,
     full: impl AsyncFnOnce(Page, Option<&str>) -> Result<Vec<(String, Value)>, E>,
 ) -> Result<ListObjectsResponse, E> {
     let pattern = search.map(str::trim).filter(|s| !s.is_empty());
 
-    if detailed {
+    if detail == Detail::Full {
         let (rows, next_cursor) = paginate(cursor, page_size, |page| full(page, pattern)).await?;
         return Ok(ListObjectsResponse::detailed(rows.into_iter().collect(), next_cursor));
     }
@@ -200,6 +200,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{Cursor, decode_cursor, encode_cursor, list_objects, paginate};
+    use crate::types::Detail;
 
     #[test]
     fn encode_decode_round_trips_representative_offsets() {
@@ -391,7 +392,7 @@ mod tests {
             None,
             2,
             None,
-            false,
+            Detail::Names,
             async |_, _| Ok::<_, Infallible>(vec!["a".to_owned(), "b".to_owned(), "c".to_owned()]),
             async |_, _| panic!("detailed closure must not run in brief mode"),
         )
@@ -407,7 +408,7 @@ mod tests {
             None,
             5,
             None,
-            true,
+            Detail::Full,
             async |_, _| panic!("brief closure must not run in detailed mode"),
             async |_, _| Ok::<_, Infallible>(vec![("b".to_owned(), json!(1)), ("a".to_owned(), json!(2))]),
         )
@@ -426,7 +427,7 @@ mod tests {
                 None,
                 5,
                 search,
-                false,
+                Detail::Names,
                 async |_, pattern| {
                     seen = Some(pattern.map(str::to_owned));
                     Ok::<_, Infallible>(Vec::new())

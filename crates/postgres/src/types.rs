@@ -1,8 +1,4 @@
-//! PostgreSQL-specific MCP tool request types.
-//!
-//! The shared brief/detailed payload (`Objects`, `ListObjectsResponse`)
-//! and `Detail` live in the `dbmcp-server` crate; they are re-exported here so call sites can keep importing them from
-//! `crate::types`.
+//! `PostgreSQL`-specific MCP tool request types.
 
 use dbmcp_server::listing::Cursor;
 use schemars::JsonSchema;
@@ -41,7 +37,7 @@ pub struct ObjectsRequest {
     /// clause: `%` matches any sequence of characters and `_` matches any single character.
     #[serde(default)]
     pub search: Option<String>,
-    /// `names` (default) returns bare names; `full` returns metadata keyed by name.
+    /// How much metadata to return per object. Defaults to `names`.
     #[serde(default)]
     pub detail: Detail,
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.

@@ -1,9 +1,7 @@
 //! `SQLite` handler: composes a [`SqliteConnection`] with the MCP tool router.
 //!
-//! All pool ownership and pool initialization logic lives in the
-//! [`SqliteConnection`]. This module exposes the MCP
-//! `ServerHandler` surface and one thin delegator method that the
-//! per-tool implementations call.
+//! Pools live in [`SqliteConnection`]; tool logic lives in
+//! [`operations`](crate::operations).
 
 use dbmcp_privacy::{MaybeRedact, Redactor};
 use dbmcp_server::{PoolFuture, Pools, Server, ToolHandler, ToolRouterExt, ToolSpec, server_info};

@@ -12,7 +12,7 @@ Use when:
 - Data changes (INSERT, UPDATE, DELETE) → use `write` (not available in read-only mode)
 - Query performance analysis → use `explain`
 - Discovering tables or columns → use objects (pass `detail: "full"` for column-level metadata)
-- Switching database context (USE is rejected) → pass the `database` argument
+- Switching database context: `USE` is rejected
 </when_not_to_use>
 
 <examples>

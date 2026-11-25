@@ -65,7 +65,7 @@ expression: tools
   {
     "name": "objects",
     "title": "Objects",
-    "description": "List database objects by kind: names, or full metadata keyed by name.\n\n<usecase>\nUse before writing SQL to discover object names and shapes. Prefer this over querying the catalog through `read`.\n</usecase>\n\n<parameters>\n- `kind` — Object kind: `table`, `view`, `trigger`. Default `table`.\n- `search` — Case-insensitive filter on names via `LIKE`. `%` matches any sequence; `_` matches a single character.\n- `detail` — `names` (default) returns bare names; `full` returns metadata keyed by name.\n- `cursor` — Opaque pagination cursor; echo the prior response's `nextCursor`.\n</parameters>\n\n<examples>\n✓ \"What tables are there?\" → objects()\n✓ \"What columns does orders have?\" → objects(search=\"orders\", detail=\"full\")\n✓ \"Which triggers exist?\" → objects(kind=\"trigger\")\n</examples>\n\n<what_it_returns>\n`detail: \"names\"`: `{\"objects\": [...]}`, a sorted array of name strings.\n`detail: \"full\"`: `{\"objects\": {name: metadata}}`; the name is the key and is not repeated. Metadata per kind:\n- `table`: `schema`, `kind`, `owner`, `comment`, `columns`, `constraints`, `indexes`, `triggers`.\n- `view`: names only; `search` and `detail` are rejected.\n- `trigger`: `schema`, `table`, `definition` (the stored `CREATE TRIGGER` text).\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor`; keep `kind`, `search`, and `detail` the same across pages.\n</pagination>\n",
+    "description": "List database objects by kind: names, or full metadata keyed by name.\n\n<usecase>\nUse before writing SQL to discover object names and shapes. Prefer this over querying the catalog through `read`.\n</usecase>\n\n<examples>\n✓ \"What tables are there?\" → objects()\n✓ \"What columns does orders have?\" → objects(search=\"orders\", detail=\"full\")\n✓ \"Which triggers exist?\" → objects(kind=\"trigger\")\n</examples>\n\n<what_it_returns>\n`detail: \"names\"`: `{\"objects\": [...]}`, a sorted array of name strings.\n`detail: \"full\"`: `{\"objects\": {name: metadata}}`; the name is the key and is not repeated. Metadata per kind:\n- `table`: `schema`, `kind`, `owner`, `comment`, `columns`, `constraints`, `indexes`, `triggers`.\n- `view`: names only; `search` and `detail` are rejected.\n- `trigger`: `schema`, `table`, `definition` (the stored `CREATE TRIGGER` text).\n</what_it_returns>\n\n<pagination>\nKeep `kind`, `search`, and `detail` the same across pages.\n</pagination>\n",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -98,7 +98,7 @@ expression: tools
           "default": null
         },
         "detail": {
-          "description": "`names` (default) returns bare names; `full` returns metadata keyed by name.",
+          "description": "How much metadata to return per object. Defaults to `names`.",
           "oneOf": [
             {
               "description": "A sorted array of bare object names.",
@@ -113,7 +113,7 @@ expression: tools
           ]
         },
         "cursor": {
-          "description": "Opaque pagination cursor. Omit for the first page; pass the prior response's `nextCursor` verbatim.",
+          "description": "Opaque cursor from a prior response's `nextCursor`; omit for the first page.",
           "type": [
             "string",
             "null"

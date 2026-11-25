@@ -103,14 +103,6 @@ pub enum Detail {
     Full,
 }
 
-impl Detail {
-    /// Whether full metadata is requested.
-    #[must_use]
-    pub const fn is_full(self) -> bool {
-        matches!(self, Self::Full)
-    }
-}
-
 /// Rejects an `objects` call whose `kind` is unavailable in this configuration.
 #[must_use]
 pub fn unavailable_kind(kind: &str, reason: &str) -> rmcp::ErrorData {
@@ -123,7 +115,7 @@ pub fn unavailable_kind(kind: &str, reason: &str) -> rmcp::ErrorData {
 ///
 /// Returns an invalid-params error when either option is set.
 pub fn names_only(kind: &str, search: Option<&str>, detail: Detail) -> Result<(), rmcp::ErrorData> {
-    if search.is_some() || detail.is_full() {
+    if search.is_some() || detail == Detail::Full {
         Err(rmcp::ErrorData::invalid_params(
             format!("kind `{kind}` lists names only: omit `search` and `detail`"),
             None,

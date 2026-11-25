@@ -1,10 +1,4 @@
-//! Tool logic of the `SQLite` backend.
-//!
-//! One file per MCP tool (`objects`, `read`, `write`, `explain`), each an
-//! inherent `impl SqliteHandler` block holding the public method of the same
-//! name. The [`tools`](crate::tools) shapes forward to these methods, and tests
-//! call them directly. Statements the server writes itself come from
-//! [`queries`](crate::queries).
+//! Tool logic: one `impl SqliteHandler` block per MCP tool, called from [`tools`](crate::tools).
 
 mod explain;
 mod objects;

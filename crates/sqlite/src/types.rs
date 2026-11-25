@@ -1,11 +1,6 @@
-//! SQLite-specific MCP tool request types.
+//! `SQLite`-specific MCP tool request types.
 //!
-//! Unlike `MySQL` and `PostgreSQL`, `SQLite` operates on a single file and
-//! has no database selection, so these types omit the `database` field
-//! present in the shared server types. `Objects` and
-//! `ListObjectsResponse` live in the shared `dbmcp-server` crate; they are
-//! re-exported here so call sites can keep importing them from
-//! `crate::types`.
+//! `SQLite` operates on a single file, so these types have no `database` field.
 
 use dbmcp_server::listing::Cursor;
 use schemars::JsonSchema;
@@ -36,10 +31,10 @@ pub struct ObjectsRequest {
     /// clause: `%` matches any sequence of characters and `_` matches any single character.
     #[serde(default)]
     pub search: Option<String>,
-    /// `names` (default) returns bare names; `full` returns metadata keyed by name.
+    /// How much metadata to return per object. Defaults to `names`.
     #[serde(default)]
     pub detail: Detail,
-    /// Opaque pagination cursor. Omit for the first page; pass the prior response's `nextCursor` verbatim.
+    /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
     pub cursor: Option<Cursor>,
 }

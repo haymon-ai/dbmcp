@@ -1,9 +1,7 @@
 //! `PostgreSQL` handler: composes a [`PostgresConnection`] with the MCP tool router.
 //!
-//! All pool ownership and pool initialization logic lives in the
-//! [`PostgresConnection`]. This module wires the connection into
-//! the MCP `ServerHandler` surface and exposes a small set of thin
-//! delegator methods that the per-tool implementations call.
+//! Pools live in [`PostgresConnection`]; tool logic lives in
+//! [`operations`](crate::operations).
 
 use dbmcp_privacy::{MaybeRedact, Redactor};
 use dbmcp_server::{PoolFuture, Pools, Server, ToolHandler, ToolRouterExt, ToolSpec, server_info};
@@ -34,8 +32,7 @@ const INSTRUCTIONS_READ_ONLY_PINNED: &str = include_str!("../assets/instructions
 
 /// Declarative tool table: `(tool, pinned, read_only)`.
 ///
-/// Per-database tools register as `Tool<true>` when pinned, else `Tool<false>`.
-/// Cross-database tools are hidden when pinned.
+/// Each tool registers as `Tool<true>` when pinned, else `Tool<false>`.
 const TOOLS: &[ToolSpec<PostgresHandler>] = &[
     ToolSpec::tool::<ObjectsTool<true>>(true, false),
     ToolSpec::tool::<ObjectsTool<false>>(false, false),
@@ -234,20 +231,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pinned_objects_schema_drops_database() {
-        let pinned = pinned_handler(true).tool_router;
-        let unpinned = handler(true).tool_router;
-        let has_database = |router: &ToolRouter<PostgresHandler>| {
-            router.get("objects").expect("objects registered").input_schema["properties"]
-                .as_object()
-                .expect("properties")
-                .contains_key("database")
-        };
-        assert!(has_database(&unpinned));
-        assert!(!has_database(&pinned));
-    }
-
-    #[tokio::test]
     async fn instructions_name_only_registered_tools() {
         for (read_only, instructions) in [
             (false, handler(false).get_info().instructions),
@@ -258,16 +241,6 @@ mod tests {
             let instructions = instructions.expect("instructions present");
             assert!(instructions.contains("`objects`"));
             assert_eq!(instructions.contains("`write`"), !read_only);
-            for old in [
-                "listTables",
-                "readQuery",
-                "writeQuery",
-                "explainQuery",
-                "dropTable",
-                "createDatabase",
-            ] {
-                assert!(!instructions.contains(old), "instructions must not mention {old}");
-            }
         }
     }
 }

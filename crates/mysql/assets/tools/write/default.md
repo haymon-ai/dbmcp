@@ -10,7 +10,7 @@ Use when:
 <when_not_to_use>
 - Read-only queries (SELECT, SHOW) → use `read`
 - Query performance analysis → use `explain`
-- Switching database context (USE is rejected) → pass the `database` argument
+- Switching database context: `USE` is rejected
 </when_not_to_use>
 
 <examples>

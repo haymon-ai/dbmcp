@@ -38,7 +38,7 @@ With `detail: "names"` the response is a sorted JSON array of names:
 }
 ```
 
-With `detail: "full"` the response is an object keyed by name; the name is the key only and is not repeated inside the value. Both shapes share one row order, so a client can switch `detail` mid-pagination without losing position:
+With `detail: "full"` the response is an object keyed by name; the name is the key only and is not repeated inside the value.:
 
 ```json
 {
@@ -69,7 +69,7 @@ Each value carries `schema`, `kind`, `owner`, `comment`, `columns`, `constraints
 
 ### Views
 
-Materialized views are not listed here; they have their own kind. View names are unique per schema, so no duplicates appear.
+Materialized views are not listed here; they have their own kind.
 
 - **PostgreSQL** — `schema` (always `"public"`), `owner` (from `pg_views.viewowner`), `description` (from `obj_description`, or `null` when no `COMMENT ON VIEW`), and `definition` (the `SELECT` body verbatim from `pg_views.definition`, with no `CREATE VIEW` wrapper). Column metadata and view-level options (`security_barrier`, `security_invoker`, `WITH CHECK OPTION`) are omitted. PostgreSQL exposes views in `pg_class`, so their columns appear under `kind: "table"` with `detail: "full"`.
 - **MySQL / MariaDB** — `schema`, `definer` (`user@host`), `security` (`INVOKER` / `DEFINER`), `checkOption` (`NONE` / `CASCADED` / `LOCAL`), `updatable` (boolean), `characterSetClient` and `collationConnection` (session context captured at view creation), and `definition` (the `SELECT` body verbatim from `information_schema.VIEWS.VIEW_DEFINITION`; empty when the connected role lacks `SHOW VIEW`). There is no `description`: `CREATE VIEW` has no `COMMENT` clause. `algorithm` is absent because it is a MariaDB-only column.

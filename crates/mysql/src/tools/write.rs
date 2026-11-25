@@ -12,8 +12,7 @@ use crate::MysqlHandler;
 
 const NAME: &str = "write";
 const TITLE: &str = "Write";
-const DESCRIPTION_PINNED: &str = include_str!("../../assets/tools/write/default.pinned.md");
-const DESCRIPTION_UNPINNED: &str = include_str!("../../assets/tools/write/default.md");
+const DESCRIPTION: &str = include_str!("../../assets/tools/write/default.md");
 
 /// Marker type for the `write` MCP tool.
 pub(crate) struct WriteTool<const PINNED: bool>;
@@ -32,14 +31,7 @@ impl<const PINNED: bool> ToolBase for WriteTool<PINNED> {
     }
 
     fn description() -> Option<Cow<'static, str>> {
-        Some(
-            if PINNED {
-                DESCRIPTION_PINNED
-            } else {
-                DESCRIPTION_UNPINNED
-            }
-            .into(),
-        )
+        Some(DESCRIPTION.into())
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {

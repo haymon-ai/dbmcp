@@ -35,14 +35,13 @@ impl MysqlHandler {
             .unwrap_or_else(|| self.connection.default_database_name());
         let page_size = self.config.page_size;
         let search = search.as_deref();
-        let detailed = detail.is_full();
         match kind {
             ObjectKind::Table => {
                 listing::list_objects(
                     cursor,
                     page_size,
                     search,
-                    detailed,
+                    detail,
                     async |page, pattern| queries::tables::names(&self.connection, page, pattern, database).await,
                     async |page, pattern| queries::tables::details(&self.connection, page, pattern, database).await,
                 )
@@ -53,7 +52,7 @@ impl MysqlHandler {
                     cursor,
                     page_size,
                     search,
-                    detailed,
+                    detail,
                     async |page, pattern| queries::views::names(&self.connection, page, pattern, database).await,
                     async |page, pattern| queries::views::details(&self.connection, page, pattern, database).await,
                 )
@@ -64,7 +63,7 @@ impl MysqlHandler {
                     cursor,
                     page_size,
                     search,
-                    detailed,
+                    detail,
                     async |page, pattern| queries::triggers::names(&self.connection, page, pattern, database).await,
                     async |page, pattern| queries::triggers::details(&self.connection, page, pattern, database).await,
                 )
@@ -75,7 +74,7 @@ impl MysqlHandler {
                     cursor,
                     page_size,
                     search,
-                    detailed,
+                    detail,
                     async |page, pattern| queries::functions::names(&self.connection, page, pattern, database).await,
                     async |page, pattern| queries::functions::details(&self.connection, page, pattern, database).await,
                 )
@@ -86,7 +85,7 @@ impl MysqlHandler {
                     cursor,
                     page_size,
                     search,
-                    detailed,
+                    detail,
                     async |page, pattern| queries::procedures::names(&self.connection, page, pattern, database).await,
                     async |page, pattern| queries::procedures::details(&self.connection, page, pattern, database).await,
                 )
@@ -95,11 +94,11 @@ impl MysqlHandler {
             ObjectKind::Database => {
                 names_only("database", search, detail)?;
                 // Server-wide catalog: the default pool lists every database.
-                let (databases, next_cursor) = listing::paginate(cursor, page_size, async |page| {
+                listing::paginate(cursor, page_size, async |page| {
                     queries::databases::names(&self.connection, page).await
                 })
-                .await?;
-                return Ok(ListObjectsResponse::brief(databases, next_cursor));
+                .await
+                .map(|(names, next_cursor)| ListObjectsResponse::brief(names, next_cursor))
             }
         }
         .map_err(Into::into)

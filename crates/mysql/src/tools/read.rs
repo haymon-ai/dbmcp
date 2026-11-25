@@ -12,8 +12,7 @@ use crate::MysqlHandler;
 
 const NAME: &str = "read";
 const TITLE: &str = "Read";
-const DESCRIPTION_PINNED: &str = include_str!("../../assets/tools/read/default.pinned.md");
-const DESCRIPTION_UNPINNED: &str = include_str!("../../assets/tools/read/default.md");
+const DESCRIPTION: &str = include_str!("../../assets/tools/read/default.md");
 
 /// Marker type for the `read` MCP tool.
 pub(crate) struct ReadTool<const PINNED: bool>;
@@ -32,14 +31,7 @@ impl<const PINNED: bool> ToolBase for ReadTool<PINNED> {
     }
 
     fn description() -> Option<Cow<'static, str>> {
-        Some(
-            if PINNED {
-                DESCRIPTION_PINNED
-            } else {
-                DESCRIPTION_UNPINNED
-            }
-            .into(),
-        )
+        Some(DESCRIPTION.into())
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {

@@ -27,14 +27,13 @@ impl SqliteHandler {
     ) -> Result<ListObjectsResponse, ErrorData> {
         let page_size = self.config.page_size;
         let search = search.as_deref();
-        let detailed = detail.is_full();
         match kind {
             ObjectKind::Table => {
                 listing::list_objects(
                     cursor,
                     page_size,
                     search,
-                    detailed,
+                    detail,
                     async |page, pattern| queries::tables::names(&self.connection, page, pattern).await,
                     async |page, pattern| queries::tables::details(&self.connection, page, pattern).await,
                 )
@@ -42,18 +41,18 @@ impl SqliteHandler {
             }
             ObjectKind::View => {
                 names_only("view", search, detail)?;
-                let (views, next_cursor) = listing::paginate(cursor, page_size, async |page| {
+                listing::paginate(cursor, page_size, async |page| {
                     queries::views::names(&self.connection, page).await
                 })
-                .await?;
-                return Ok(ListObjectsResponse::brief(views, next_cursor));
+                .await
+                .map(|(names, next_cursor)| ListObjectsResponse::brief(names, next_cursor))
             }
             ObjectKind::Trigger => {
                 listing::list_objects(
                     cursor,
                     page_size,
                     search,
-                    detailed,
+                    detail,
                     async |page, pattern| queries::triggers::names(&self.connection, page, pattern).await,
                     async |page, pattern| queries::triggers::details(&self.connection, page, pattern).await,
                 )

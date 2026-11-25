@@ -1,6 +1,6 @@
 ## Workflow
 
-1. Call `objects` to discover tables, views, materialized views, triggers, functions, procedures (in the `public` schema), and databases before writing SQL. Pass `kind` to pick the object kind (default `table`), `search` to filter by name, and `detail: "full"` for columns, constraints, indexes, and definitions.
+1. Call `objects` to discover tables, views, materialized views, triggers, functions, procedures (in the `public` schema), and databases before writing SQL.
 2. Use `read` for read-only SQL (SELECT, SHOW, EXPLAIN).
 3. Use `explain` to analyze query execution plans and diagnose slow queries.
 
