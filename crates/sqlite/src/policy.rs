@@ -105,17 +105,11 @@ async fn run<'c>(
     access: Access,
     sink: &mut (impl FnMut(Value) + Send),
 ) -> Result<Run<'c>, Stop> {
-    let write = match access {
-        Access::Read => {
-            // A file opened read-only needs no pragma; `before_acquire` switches it off again.
-            if !read_only {
-                queries::session::query_only(&mut *conn, true).await?;
-            }
-            false
-        }
-        Access::Write => true,
-    };
-    let mut tx = queries::policy::begin(conn, write).await?;
+    // A file opened read-only needs no pragma; `before_acquire` switches it off again.
+    if access == Access::Read && !read_only {
+        queries::session::query_only(&mut *conn, true).await?;
+    }
+    let mut tx = queries::policy::begin(conn, access).await?;
     let analyzed = resolve(&mut tx, sql).await?;
     let mut planned = analyzed.plan(config)?;
     let executed = execute(&mut tx, sql, &mut planned, sink).await;

@@ -147,7 +147,7 @@ const DETAILS: &str = r"
     ORDER BY r.ROUTINE_NAME
     LIMIT ? OFFSET ?";
 
-/// Lists one `page` of procedure entries in `database` with details, filtered by `pattern` when given.
+/// Lists one `page` of detailed procedure entries in `database`, filtered by `pattern`.
 ///
 /// # Errors
 ///

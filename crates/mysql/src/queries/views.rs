@@ -75,7 +75,7 @@ const DETAILS: &str = r"
     ORDER BY v.TABLE_NAME
     LIMIT ? OFFSET ?";
 
-/// Lists one `page` of view entries in `database` with details, filtered by `pattern` when given.
+/// Lists one `page` of detailed view entries in `database`, filtered by `pattern`.
 ///
 /// # Errors
 ///

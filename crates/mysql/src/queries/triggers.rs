@@ -92,7 +92,7 @@ const DETAILS: &str = r"
     ORDER BY TRIGGER_NAME
     LIMIT ? OFFSET ?";
 
-/// Lists one `page` of trigger entries in `database` with details, filtered by `pattern` when given.
+/// Lists one `page` of detailed trigger entries in `database`, filtered by `pattern`.
 ///
 /// # Errors
 ///

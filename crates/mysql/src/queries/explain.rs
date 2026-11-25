@@ -13,7 +13,9 @@ const ANALYZE: &str = "EXPLAIN ANALYZE";
 /// Prefix of a plan request that only plans the statement.
 const PLAN: &str = "EXPLAIN FORMAT=JSON";
 
-/// Wraps `query` in `backend`'s plan request, running it when `analyze`; builds the text, runs nothing.
+/// Wraps `query` in `backend`'s plan request; builds the text, runs nothing.
+///
+/// The plan request runs `query` when `analyze` is set.
 #[must_use]
 pub(crate) fn statement(query: &str, analyze: bool, backend: database::Backend) -> String {
     let prefix = match (analyze, backend) {

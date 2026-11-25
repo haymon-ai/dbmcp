@@ -158,7 +158,7 @@ async fn run<'c>(
     access: Access,
     sink: &mut (impl FnMut(Value) + Send),
 ) -> Result<Run<'c>, Stop> {
-    let mut tx = queries::policy::begin(&mut *conn, access == Access::Write).await?;
+    let mut tx = queries::policy::begin(&mut *conn, access).await?;
     let (analyzed, owners) = resolve(&mut tx, sql).await?;
     let mut planned = analyzed.plan(config)?;
     if *analyzed.statement() == StatementKind::CreateIndex {
@@ -1117,7 +1117,7 @@ mod tests {
             sql: &str,
             change: &'static str,
         ) -> bool {
-            let mut tx = queries::policy::begin(&mut *conn, false).await.expect("begin");
+            let mut tx = queries::policy::begin(&mut *conn, Access::Read).await.expect("begin");
             let (analyzed, owners) = resolve(&mut tx, sql).await.expect("resolve");
             let mut planned = analyzed.plan(config).expect("plan");
             sqlx::raw_sql(SqlStr::from_static(change))

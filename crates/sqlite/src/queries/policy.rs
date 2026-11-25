@@ -3,6 +3,7 @@
 //! Every function takes the connection the planner holds and returns raw
 //! rows; folding them into catalog entries stays in `crate::policy`.
 
+use dbmcp_policy::Access;
 use serde_json::Value;
 use sqlx::{AssertSqlSafe, SqlStr, Transaction};
 
@@ -14,16 +15,19 @@ const BEGIN_READ: &str = "BEGIN";
 /// Starts a write transaction, taking the write lock before anything runs.
 const BEGIN_WRITE: &str = "BEGIN IMMEDIATE";
 
-/// Starts the transaction a planned statement runs in; `write` takes the write lock.
+/// Starts the transaction a planned statement runs in under `access`; a write takes the write lock.
 ///
 /// # Errors
 ///
 /// Returns the [`sqlx::Error`] of a failed `BEGIN`.
 pub(crate) async fn begin(
     conn: &mut sqlx::SqliteConnection,
-    write: bool,
+    access: Access,
 ) -> Result<Transaction<'_, sqlx::Sqlite>, sqlx::Error> {
-    let begin = if write { BEGIN_WRITE } else { BEGIN_READ };
+    let begin = match access {
+        Access::Read => BEGIN_READ,
+        Access::Write => BEGIN_WRITE,
+    };
     sqlx::Connection::begin_with(conn, SqlStr::from_static(begin)).await
 }
 

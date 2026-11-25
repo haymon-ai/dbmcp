@@ -152,8 +152,7 @@ impl Connection for PostgresConnection {
     }
 
     async fn set_timeout(&self, conn: &mut sqlx::PgConnection, limit: Duration) -> Result<(), sqlx::Error> {
-        let millis = limit.as_millis().to_string();
-        queries::session::set_timeout(conn, millis).await
+        queries::session::set_timeout(conn, limit).await
     }
 
     async fn kill(conn: &mut sqlx::PgConnection, id: u64) -> Result<(), sqlx::Error> {

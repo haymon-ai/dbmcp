@@ -331,7 +331,7 @@ async fn run<'c>(
         queries::policy::explain_format(&mut *conn, true).await?;
     }
     let ran = async {
-        let mut tx = queries::policy::begin(&mut *conn, access == Access::Write).await?;
+        let mut tx = queries::policy::begin(&mut *conn, access).await?;
         let executed = async {
             let executed = execute(&mut tx, sql, &mut planned, &probe, &owners, sink).await?;
             // A statement that commits implicitly cannot be undone, and moves no rows.
@@ -605,10 +605,6 @@ async fn cascades(
     if roots.is_empty() {
         return Ok(());
     }
-    let roots: Vec<_> = roots
-        .iter()
-        .map(|(schema, name)| (schema.as_str(), name.as_str()))
-        .collect();
     let column =
         |schema: &str, name: &str, column: String| SourceRef::new(RelationId::new(CATALOG, schema, name), column);
     for (rs, rt, ps, pt, pc, cs, ct, cc, rule, deletes) in queries::policy::cascades(&mut *conn, &roots).await? {

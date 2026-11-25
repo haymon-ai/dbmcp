@@ -1,5 +1,7 @@
 //! Connection hook statements: backend pid, timeout, cancel, and version probes.
 
+use std::time::Duration;
+
 /// Reads the server process id of the session.
 const ID: &str = "SELECT pg_backend_pid()";
 
@@ -15,12 +17,13 @@ pub(crate) async fn id(conn: &mut sqlx::PgConnection) -> Result<i32, sqlx::Error
 /// Sets the session `statement_timeout` to `$1` milliseconds.
 const SET_TIMEOUT: &str = "SELECT set_config('statement_timeout', $1, false)";
 
-/// Sets the session `statement_timeout` of `conn` to `millis` milliseconds.
+/// Sets the session `statement_timeout` of `conn` to `limit`.
 ///
 /// # Errors
 ///
 /// Returns the [`sqlx::Error`] of a failed query.
-pub(crate) async fn set_timeout(conn: &mut sqlx::PgConnection, millis: String) -> Result<(), sqlx::Error> {
+pub(crate) async fn set_timeout(conn: &mut sqlx::PgConnection, limit: Duration) -> Result<(), sqlx::Error> {
+    let millis = limit.as_millis().to_string();
     sqlx::query(SET_TIMEOUT).bind(millis).execute(conn).await.map(|_| ())
 }
 

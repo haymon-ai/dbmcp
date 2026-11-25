@@ -310,7 +310,7 @@ LEFT JOIN partitions_info pi
  AND pi.TABLE_NAME   = ti.table_name
 ORDER BY ti.table_name"#;
 
-/// Lists one `page` of table entries in `database` with details, filtered by `pattern` when given.
+/// Lists one `page` of detailed table entries in `database`, filtered by `pattern`.
 ///
 /// Each entry's arrays come back sorted by [`order_arrays`].
 ///

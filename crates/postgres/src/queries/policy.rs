@@ -3,6 +3,7 @@
 //! Every function takes the connection the planner holds and returns raw
 //! rows; folding them into catalog entries stays in `crate::policy`.
 
+use dbmcp_policy::Access;
 use sqlx::postgres::PgRow;
 use sqlx::{FromRow as _, Row as _, SqlStr, Transaction};
 
@@ -14,16 +15,19 @@ const BEGIN_READ: &str = "START TRANSACTION READ ONLY";
 /// Starts a read-write transaction.
 const BEGIN_WRITE: &str = "BEGIN";
 
-/// Starts the transaction a planned statement runs in; `write` allows writes.
+/// Starts the transaction a planned statement runs in under `access`; a write allows writes.
 ///
 /// # Errors
 ///
 /// Returns the [`sqlx::Error`] of a failed transaction start.
 pub(crate) async fn begin(
     conn: &mut sqlx::PgConnection,
-    write: bool,
+    access: Access,
 ) -> Result<Transaction<'_, sqlx::Postgres>, sqlx::Error> {
-    let begin = if write { BEGIN_WRITE } else { BEGIN_READ };
+    let begin = match access {
+        Access::Read => BEGIN_READ,
+        Access::Write => BEGIN_WRITE,
+    };
     sqlx::Connection::begin_with(conn, SqlStr::from_static(begin)).await
 }
 
@@ -74,7 +78,7 @@ pub(crate) async fn probe(conn: &mut sqlx::PgConnection) -> Result<Probe, sqlx::
 /// non-`SELECT` rule. Each foreign key's columns pair by position. The walk
 /// starts at every edge whose parent is the relation or a descendant; below
 /// each reached child table come all its edges, the closure
-/// `Relation::cascades` asks for. `UNION` ends it on cycles.
+/// [`Relation::cascades`](dbmcp_policy::Relation::cascades) asks for. `UNION` ends it on cycles.
 const RESOLVE: &str = "SELECT s.nspname::text, c.relname::text, c.relkind::text, c.oid::int8, \
      CASE WHEN c.relkind IN ('v', 'm') THEN pg_get_viewdef(c.oid) END, \
      coalesce(cols.names, '{}'), coalesce(cols.numbers, '{}'), \

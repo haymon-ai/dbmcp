@@ -3,6 +3,7 @@
 //! Every function takes the connection the planner holds and returns raw
 //! rows; folding them into catalog entries stays in `crate::policy`.
 
+use dbmcp_policy::Access;
 use sqlx::mysql::MySqlDatabaseError;
 use sqlx::{AssertSqlSafe, SqlStr, Transaction};
 
@@ -12,16 +13,19 @@ const BEGIN_READ: &str = "START TRANSACTION READ ONLY";
 /// Starts a read-write transaction.
 const BEGIN_WRITE: &str = "START TRANSACTION";
 
-/// Starts the transaction a planned statement runs in; `write` allows writes.
+/// Starts the transaction a planned statement runs in under `access`; a write allows writes.
 ///
 /// # Errors
 ///
 /// Returns the [`sqlx::Error`] of a failed transaction start.
 pub(crate) async fn begin(
     conn: &mut sqlx::MySqlConnection,
-    write: bool,
+    access: Access,
 ) -> Result<Transaction<'_, sqlx::MySql>, sqlx::Error> {
-    let begin = if write { BEGIN_WRITE } else { BEGIN_READ };
+    let begin = match access {
+        Access::Read => BEGIN_READ,
+        Access::Write => BEGIN_WRITE,
+    };
     sqlx::Connection::begin_with(conn, SqlStr::from_static(begin)).await
 }
 
@@ -171,7 +175,7 @@ pub(crate) async fn details(
 /// table, and column, the child's, the rule (`CASCADE`, `SET NULL`, `SET
 /// DEFAULT`; `InnoDB` rejects the last, read anyway), and whether a parent
 /// `DELETE` fires it. Below each reached child table come all its edges,
-/// the closure `Relation::cascades` asks for. `UNION` ends the walk on
+/// the closure [`Relation::cascades`](dbmcp_policy::Relation::cascades) asks for. `UNION` ends the walk on
 /// cycles. Names compare in the connection collation, which may over-match
 /// (fail closed).
 const CASCADES_HEAD: &str = "WITH RECURSIVE \
@@ -218,7 +222,7 @@ pub(crate) type Edge = (
 /// Returns the [`sqlx::Error`] of a failed query.
 pub(crate) async fn cascades(
     conn: &mut sqlx::MySqlConnection,
-    roots: &[(&str, &str)],
+    roots: &[(String, String)],
 ) -> Result<Vec<Edge>, sqlx::Error> {
     let sql = format!(
         "{CASCADES_HEAD}{}{CASCADES_TAIL}",
@@ -226,7 +230,7 @@ pub(crate) async fn cascades(
     );
     let mut query = sqlx::query_as::<_, Edge>(AssertSqlSafe(sql));
     for (schema, name) in roots {
-        query = query.bind(*schema).bind(*name);
+        query = query.bind(schema).bind(name);
     }
     query.fetch_all(conn).await
 }
