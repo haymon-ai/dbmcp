@@ -152,8 +152,12 @@ privacy:
     bank-accounts:
       columns:
         - spy_company_business_unit.iban
-        - spy_company_business_unit.bic
       entity: IBAN_CODE
+      operator: hash
+    bics:
+      columns:
+        - spy_company_business_unit.bic
+      entity: BIC_CODE
       operator: hash
     birth-dates:
       columns:

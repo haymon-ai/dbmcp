@@ -105,6 +105,8 @@ pub enum Entity {
     DateOfBirth,
     /// `PASSWORD_HASH` — modular-crypt / PHC hash (bcrypt, sha-crypt, argon2).
     PasswordHash,
+    /// `BIC_CODE` — ISO 9362 bank identifier code (SWIFT/BIC).
+    BicCode,
     /// `PERSON` — person name detected by the optional ML/NER pass.
     Person,
     /// `LOCATION` — place or city name detected by the optional ML/NER pass.
@@ -167,6 +169,7 @@ impl Entity {
         Entity::Postcode,
         Entity::DateOfBirth,
         Entity::PasswordHash,
+        Entity::BicCode,
         Entity::Person,
         Entity::Location,
         Entity::Organization,
@@ -225,6 +228,7 @@ impl Entity {
             Entity::Postcode => "POSTCODE",
             Entity::DateOfBirth => "DATE_OF_BIRTH",
             Entity::PasswordHash => "PASSWORD_HASH",
+            Entity::BicCode => "BIC_CODE",
             Entity::Person => "PERSON",
             Entity::Location => "LOCATION",
             Entity::Organization => "ORGANIZATION",
@@ -284,6 +288,7 @@ impl Entity {
             Entity::Postcode => "<POSTCODE>",
             Entity::DateOfBirth => "<DATE_OF_BIRTH>",
             Entity::PasswordHash => "<PASSWORD_HASH>",
+            Entity::BicCode => "<BIC_CODE>",
             Entity::Person => "<PERSON>",
             Entity::Location => "<LOCATION>",
             Entity::Organization => "<ORGANIZATION>",
@@ -347,8 +352,8 @@ mod tests {
     }
 
     #[test]
-    fn all_has_52_variants() {
-        assert_eq!(Entity::ALL.len(), 52);
+    fn all_has_53_variants() {
+        assert_eq!(Entity::ALL.len(), 53);
     }
 
     #[test]

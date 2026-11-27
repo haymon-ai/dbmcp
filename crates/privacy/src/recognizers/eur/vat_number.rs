@@ -77,6 +77,8 @@ mod tests {
             ("VAT XX123456789", &[]),
             ("DE12345", &[]),
             ("VAT de123456789", &[]),
+            ("VAT DEUTDEFF500", &[]),
+            ("VAT ATU12345678", &[("ATU12345678", 1.0)]),
             ("", &[]),
         ];
         for (input, expected) in cases {

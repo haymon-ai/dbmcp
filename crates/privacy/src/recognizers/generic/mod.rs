@@ -1,6 +1,7 @@
 //! Region-neutral recognizers.
 
 mod api_key;
+mod bic;
 mod credit_card;
 mod crypto;
 mod cvv;
@@ -17,6 +18,7 @@ mod private_key;
 mod url;
 
 pub use api_key::{api_key_aws_secret, api_key_strong};
+pub use bic::bic_code;
 pub use credit_card::credit_card;
 pub use crypto::crypto;
 pub use cvv::cvv;

@@ -173,14 +173,18 @@ privacy:
     bank-accounts:
       columns:
         - tkundenkontodaten.cIBAN
-        - tkundenkontodaten.cBIC
         - tkundenkontodaten.cBLZ
         - tkundenkontodaten.nKonto
         - tzahlungsinfo.cIBAN
-        - tzahlungsinfo.cBIC
         - tzahlungsinfo.cBLZ
         - tzahlungsinfo.cKontoNr
       entity: IBAN_CODE
+      operator: hash
+    bics:
+      columns:
+        - tkundenkontodaten.cBIC
+        - tzahlungsinfo.cBIC
+      entity: BIC_CODE
       operator: hash
     cards:
       columns:

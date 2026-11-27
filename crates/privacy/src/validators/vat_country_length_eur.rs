@@ -39,7 +39,8 @@ const VAT_COUNTRY_LENGTHS: &[([u8; 2], usize, usize)] = &[
 ///
 /// Format `<ISO2><alphanumeric>`. Returns [`ValidationOutcome::Valid`] only
 /// when the prefix is in the EU / UK / XI table, the body length matches
-/// the per-country window, and the body contains at least one ASCII digit.
+/// the per-country window, the body contains at least one ASCII digit, and
+/// the body does not start with four letters (no VAT format does; BICs do).
 /// All other cases return [`ValidationOutcome::Invalid`]. Unknown prefixes
 /// and digit-less bodies are rejected to avoid all-uppercase English words
 /// (e.g. `CERTIFICATE`, `INFRASTRUCTURE`) being tagged as VAT identifiers.
@@ -52,5 +53,8 @@ pub(super) fn validate(candidate: &str) -> ValidationOutcome {
         return ValidationOutcome::Invalid;
     };
     let has_digit = body.iter().any(u8::is_ascii_digit);
-    ValidationOutcome::from_bool(has_digit && (lo..=hi).contains(&body.len()))
+    let letter_led = body
+        .get(..4)
+        .is_some_and(|head| head.iter().all(u8::is_ascii_alphabetic));
+    ValidationOutcome::from_bool(has_digit && !letter_led && (lo..=hi).contains(&body.len()))
 }

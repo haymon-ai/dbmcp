@@ -152,6 +152,11 @@ const SQL_KEYWORDS: &[&str] = &[
     "WITH",
 ];
 
+/// Reports whether `code` is an ISO 3166-1 alpha-2 country code, matched exactly.
+pub(crate) fn is_country_alpha2(code: &str) -> bool {
+    code.len() == 2 && COUNTRIES.binary_search(&code).is_ok()
+}
+
 /// Reports whether `word` is one of the listed codes, matched exactly.
 pub(crate) fn is_code(word: &str) -> bool {
     [COUNTRIES, CURRENCIES, LANGUAGES, SQL_KEYWORDS]
