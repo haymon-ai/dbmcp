@@ -1,9 +1,9 @@
 ---
 title: Data types
-description: Every kind of personal or sensitive data the built-in recognizers detect
+description: Every kind of personal or sensitive data the built-in recognizers detect, and the rule-only labels `privacy.rules` can assign
 ---
 
-Forty-eight built-in entity types ship by default, grouped into seven categories. Each entity type drives the `replace` operator's placeholder and is tagged with a category for opt-in subsetting via `DBMCP_PRIVACY_CATEGORIES` / `privacy.categories`. Several recognisers ship with a checksum or context validator (Luhn, mod-11, ABA, EIN prefix, JWT header, PEM type-match, IRS ITIN range, NPI Luhn, DEA check digit, ICAO 9303 check digit, ISO 7064, KVNR / LANR / RVNR checksums, ISO 3166 country code, keyword context) that promotes the match to maximum confidence and rejects look-alikes.
+Forty-eight built-in entity types ship by default, grouped into seven categories. Each entity type drives the `replace` operator's placeholder and is tagged with a category for opt-in subsetting via `DBMCP_PRIVACY_CATEGORIES` / `privacy.categories`. Several recognisers ship with a checksum or context validator (Luhn, mod-11, ABA, EIN prefix, JWT header, PEM type-match, IRS ITIN range, NPI Luhn, DEA check digit, ICAO 9303 check digit, ISO 7064, KVNR / LANR / RVNR checksums, ISO 3166 country code, keyword context) that promotes the match to maximum confidence and rejects look-alikes. The [rule-only](#rule-only) entities at the end are assigned by column rules alone.
 
 A keyword-gated recogniser only matches when one of its context keywords sits in the five words before the value or in the column name (for example `ssn`, `sin`, `routing_number`, or `routingNumber`; names split at `_`, `-`, `.` and camelCase). For these, a valid check digit alone is not enough, since order, customer, and product numbers often have one too.
 
@@ -78,3 +78,25 @@ The optional [ML/NER pass](/privacy/machine-learning) adds five entity types tha
 - `ORGANIZATION` — company and institution names (`personal`)
 - `NATIONALITY_RELIGION_POLITICS` — nationalities, religious and political groups (`personal`)
 - `FACILITY` — buildings, airports, and similar named facilities (`contact`)
+
+## Rule-only
+
+No recognizer or model emits these; only `privacy.rules` assigns them. The category in parentheses groups them for reading; `privacy.categories` does not affect them.
+
+- `AUTH_TOKEN` — server-issued user bearer tokens: sessions, remember-me, reset/confirm/invite/verify tokens, share, opt-in, and voucher codes (`digital-identity`)
+- `BANK_ACCOUNT` — bank account numbers in any national format (`financial`)
+- `BANK_CODE` — sort, branch, and bank codes such as the German BLZ (`financial`)
+- `COMMERCIAL_REGISTER` — company registry numbers of any country (`government`)
+- `FREE_TEXT` — prose: notes, comments, messages, reviews, bios (`personal`)
+- `LICENSE_PLATE` — vehicle plates of any country (`government`)
+- `MIXED_CONTENT` — structured blobs: JSON, serialized data, key-value rows (`personal`)
+- `NATIONAL_ID` — national identity numbers of any country (`government`)
+- `OTP_SECRET` — TOTP seeds, backup and recovery codes, one-time codes (`digital-identity`)
+- `PASSPORT` — passport numbers of any country (`government`)
+- `PASSWORD` — plaintext passwords, PINs, shared enrolment keys (`digital-identity`)
+- `PAYMENT_TOKEN` — payment provider references to stored methods or agreements (`financial`)
+- `RESIDENCE_PERMIT` — residence and work permit and visa numbers (`government`)
+- `SOCIAL_SECURITY` — social security and insurance numbers of any country (`government`)
+- `TAX_ID` — tax ids of any country other than EU VAT numbers (`government`)
+- `USER_AGENT` — HTTP user-agent strings (`network`)
+- `USER_ID` — opaque ids pointing at one person: provider subject ids, visitor, tracking, and push ids, employee and student numbers (`digital-identity`)
