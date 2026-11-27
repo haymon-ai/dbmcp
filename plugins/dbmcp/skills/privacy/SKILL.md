@@ -20,7 +20,7 @@ privacy:
 
 - Exact keys (no `*`, quotes, spaces). Check each with `objects` (`detail: "full"`); unmatched keys are silently ignored.
 - Short keys need `database.name` (PostgreSQL: any; MySQL/MariaDB: `table.column`; SQLite: never, it fills `main.main`); PostgreSQL fills `public`, not `search_path`.
-- One rule per column. The entity only labels; every value is rewritten.
+- One rule per column. The entity only labels; every value is rewritten. Use a rule-only entity (`FREE_TEXT`, `MIXED_CONTENT`, `PASSWORD`, `AUTH_TOKEN`, `USER_ID`, `NATIONAL_ID`, …) where no detected type fits; never a stand-in.
 - YAML only; the last config file setting `privacy.rules` wins whole. Applies under `rules` and `full`, not `none`.
 - Tell the user: while rules exist, uncheckable SQL is refused, ruled columns work only in the select list, and migrations run outside dbmcp.
 

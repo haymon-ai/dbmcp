@@ -1,4 +1,4 @@
-//! Closed enum of built-in PII entity types emitted by recognizers.
+//! Closed enum of built-in PII entity types assigned by recognizers or `privacy.rules`.
 //!
 //! Variants map 1:1 to the `SCREAMING_SNAKE` wire format used in JSON output,
 //! tracing logs, and placeholder tokens (e.g. `Entity::EmailAddress` ↔
@@ -117,6 +117,40 @@ pub enum Entity {
     Nrp,
     /// `FACILITY` — building, airport, or similar named facility (ML/NER pass).
     Facility,
+    /// `FREE_TEXT` — rule-only: prose (notes, comments, messages, reviews, bios).
+    FreeText,
+    /// `MIXED_CONTENT` — rule-only: structured blob (JSON, serialized data, key-value rows).
+    MixedContent,
+    /// `PASSWORD` — rule-only: plaintext passwords, PINs, shared enrolment keys.
+    Password,
+    /// `AUTH_TOKEN` — rule-only: user bearer token, e.g. session, reset, invite, or voucher code.
+    AuthToken,
+    /// `OTP_SECRET` — rule-only: TOTP seeds, backup and recovery codes, one-time codes.
+    OtpSecret,
+    /// `USER_ID` — rule-only: opaque id of one person, e.g. visitor, tracking, or employee id.
+    UserId,
+    /// `USER_AGENT` — rule-only: HTTP user-agent string.
+    UserAgent,
+    /// `BANK_ACCOUNT` — rule-only: bank account number in any national format.
+    BankAccount,
+    /// `BANK_CODE` — rule-only: sort, branch, or bank code such as the German BLZ.
+    BankCode,
+    /// `PAYMENT_TOKEN` — rule-only: payment provider reference to a stored method or agreement.
+    PaymentToken,
+    /// `TAX_ID` — rule-only: tax id of any country other than an EU VAT number.
+    TaxId,
+    /// `COMMERCIAL_REGISTER` — rule-only: company registry number of any country.
+    CommercialRegister,
+    /// `NATIONAL_ID` — rule-only: national identity number of any country.
+    NationalId,
+    /// `PASSPORT` — rule-only: passport number of any country.
+    Passport,
+    /// `RESIDENCE_PERMIT` — rule-only: residence or work permit or visa number.
+    ResidencePermit,
+    /// `LICENSE_PLATE` — rule-only: vehicle plate of any country.
+    LicensePlate,
+    /// `SOCIAL_SECURITY` — rule-only: social security or insurance number of any country.
+    SocialSecurity,
 }
 
 impl Entity {
@@ -175,6 +209,23 @@ impl Entity {
         Entity::Organization,
         Entity::Nrp,
         Entity::Facility,
+        Entity::FreeText,
+        Entity::MixedContent,
+        Entity::Password,
+        Entity::AuthToken,
+        Entity::OtpSecret,
+        Entity::UserId,
+        Entity::UserAgent,
+        Entity::BankAccount,
+        Entity::BankCode,
+        Entity::PaymentToken,
+        Entity::TaxId,
+        Entity::CommercialRegister,
+        Entity::NationalId,
+        Entity::Passport,
+        Entity::ResidencePermit,
+        Entity::LicensePlate,
+        Entity::SocialSecurity,
     ];
 
     /// `SCREAMING_SNAKE` wire identifier (e.g. `"EMAIL_ADDRESS"`).
@@ -234,6 +285,23 @@ impl Entity {
             Entity::Organization => "ORGANIZATION",
             Entity::Nrp => "NATIONALITY_RELIGION_POLITICS",
             Entity::Facility => "FACILITY",
+            Entity::FreeText => "FREE_TEXT",
+            Entity::MixedContent => "MIXED_CONTENT",
+            Entity::Password => "PASSWORD",
+            Entity::AuthToken => "AUTH_TOKEN",
+            Entity::OtpSecret => "OTP_SECRET",
+            Entity::UserId => "USER_ID",
+            Entity::UserAgent => "USER_AGENT",
+            Entity::BankAccount => "BANK_ACCOUNT",
+            Entity::BankCode => "BANK_CODE",
+            Entity::PaymentToken => "PAYMENT_TOKEN",
+            Entity::TaxId => "TAX_ID",
+            Entity::CommercialRegister => "COMMERCIAL_REGISTER",
+            Entity::NationalId => "NATIONAL_ID",
+            Entity::Passport => "PASSPORT",
+            Entity::ResidencePermit => "RESIDENCE_PERMIT",
+            Entity::LicensePlate => "LICENSE_PLATE",
+            Entity::SocialSecurity => "SOCIAL_SECURITY",
         }
     }
 
@@ -294,6 +362,23 @@ impl Entity {
             Entity::Organization => "<ORGANIZATION>",
             Entity::Nrp => "<NATIONALITY_RELIGION_POLITICS>",
             Entity::Facility => "<FACILITY>",
+            Entity::FreeText => "<FREE_TEXT>",
+            Entity::MixedContent => "<MIXED_CONTENT>",
+            Entity::Password => "<PASSWORD>",
+            Entity::AuthToken => "<AUTH_TOKEN>",
+            Entity::OtpSecret => "<OTP_SECRET>",
+            Entity::UserId => "<USER_ID>",
+            Entity::UserAgent => "<USER_AGENT>",
+            Entity::BankAccount => "<BANK_ACCOUNT>",
+            Entity::BankCode => "<BANK_CODE>",
+            Entity::PaymentToken => "<PAYMENT_TOKEN>",
+            Entity::TaxId => "<TAX_ID>",
+            Entity::CommercialRegister => "<COMMERCIAL_REGISTER>",
+            Entity::NationalId => "<NATIONAL_ID>",
+            Entity::Passport => "<PASSPORT>",
+            Entity::ResidencePermit => "<RESIDENCE_PERMIT>",
+            Entity::LicensePlate => "<LICENSE_PLATE>",
+            Entity::SocialSecurity => "<SOCIAL_SECURITY>",
         }
     }
 }
@@ -352,8 +437,34 @@ mod tests {
     }
 
     #[test]
-    fn all_has_53_variants() {
-        assert_eq!(Entity::ALL.len(), 53);
+    fn all_has_70_variants() {
+        assert_eq!(Entity::ALL.len(), 70);
+    }
+
+    #[test]
+    fn rule_only_wire_names_parse() {
+        let expected = [
+            ("FREE_TEXT", Entity::FreeText),
+            ("MIXED_CONTENT", Entity::MixedContent),
+            ("PASSWORD", Entity::Password),
+            ("AUTH_TOKEN", Entity::AuthToken),
+            ("OTP_SECRET", Entity::OtpSecret),
+            ("USER_ID", Entity::UserId),
+            ("USER_AGENT", Entity::UserAgent),
+            ("BANK_ACCOUNT", Entity::BankAccount),
+            ("BANK_CODE", Entity::BankCode),
+            ("PAYMENT_TOKEN", Entity::PaymentToken),
+            ("TAX_ID", Entity::TaxId),
+            ("COMMERCIAL_REGISTER", Entity::CommercialRegister),
+            ("NATIONAL_ID", Entity::NationalId),
+            ("PASSPORT", Entity::Passport),
+            ("RESIDENCE_PERMIT", Entity::ResidencePermit),
+            ("LICENSE_PLATE", Entity::LicensePlate),
+            ("SOCIAL_SECURITY", Entity::SocialSecurity),
+        ];
+        for (wire, entity) in expected {
+            assert_eq!(Entity::from_str(wire).expect("rule-only wire name"), entity);
+        }
     }
 
     #[test]

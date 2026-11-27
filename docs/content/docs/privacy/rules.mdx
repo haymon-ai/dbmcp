@@ -60,7 +60,7 @@ Each entry under `privacy.rules` is one rule. The key is its name, which every e
 | Field | Required | Description |
 |-------|----------|-------------|
 | `columns` | yes | Non-empty list of table columns, each written `table.column`, `schema.table.column`, or `catalog.schema.table.column` ([Column keys](#column-keys)) |
-| `entity` | yes | The [data type](/privacy/data-types) of the values, such as `EMAIL_ADDRESS`, `PHONE_NUMBER`, or `PERSON` |
+| `entity` | yes | The [data type](/privacy/data-types) of the values, such as `EMAIL_ADDRESS`, `PHONE_NUMBER`, or `PERSON`; for data no recognizer detects, a [rule-only](/privacy/data-types#rule-only) entity such as `FREE_TEXT` or `PASSWORD` |
 | `operator` | no | `hash`, `replace`, `mask`, or `redact`; defaults to `privacy.operator` |
 
 A column may appear in only one rule, and only once in it, however its key is written; a repeat stops startup and names both places.
