@@ -63,12 +63,16 @@ privacy:
         - spy_merchant_registration_request.contact_person_first_name
         - spy_merchant_registration_request.contact_person_last_name
         - spy_product_review.nickname
-        - spy_oauth_knpu_customer_identity.external_id
-        - spy_oauth_knpu_merchant_user_identity.external_id
-        - spy_oauth_knpu_user_identity.external_id
         # Spryker Eco: PunchOut Gateway and Vertex (optional)
         - spy_punchout_credential.username
       entity: PERSON
+      operator: hash
+    user-ids:
+      columns:
+        - spy_oauth_knpu_customer_identity.external_id
+        - spy_oauth_knpu_merchant_user_identity.external_id
+        - spy_oauth_knpu_user_identity.external_id
+      entity: USER_ID
       operator: hash
     phones:
       columns:
@@ -141,15 +145,15 @@ privacy:
       columns:
         # Spryker Eco: PunchOut Gateway and Vertex (optional)
         - spy_vertex_tax_id_validation_history.tax_id
-      entity: VAT_NUMBER
+      entity: TAX_ID
       operator: hash
     registry-numbers:
       columns:
         - spy_merchant.registration_number
         - spy_merchant_registration_request.registration_number
-      entity: COMMERCIAL_REGISTER_DE
+      entity: COMMERCIAL_REGISTER
       operator: hash
-    bank-accounts:
+    ibans:
       columns:
         - spy_company_business_unit.iban
       entity: IBAN_CODE
@@ -186,7 +190,7 @@ privacy:
         - spy_ssp_inquiry.subject
         - spy_ssp_inquiry.description
         - spy_ssp_asset.note
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
@@ -197,20 +201,29 @@ privacy:
         - spy_punchout_credential.password_hash
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    tokens:
       columns:
         - spy_customer.restore_password_key
         - spy_customer.registration_key
         - spy_customer_data_change_request.verification_token
-        - spy_customer_multi_factor_auth.configuration
-        - spy_customer_multi_factor_auth_codes.code
-        - spy_user_multi_factor_auth.configuration
-        - spy_user_multi_factor_auth_codes.code
         - spy_auth_reset_password.code
         - spy_newsletter_subscriber.subscriber_key
         - spy_availability_notification_subscription.subscription_key
         - spy_company_user_invitation.hash
         - spy_resource_share.uuid
+        # Spryker Eco: PunchOut Gateway and Vertex (optional)
+        - spy_punchout_session.session_token
+        - spy_punchout_session.buyer_cookie
+      entity: AUTH_TOKEN
+      operator: redact
+    otp-secrets:
+      columns:
+        - spy_customer_multi_factor_auth_codes.code
+        - spy_user_multi_factor_auth_codes.code
+      entity: OTP_SECRET
+      operator: redact
+    secrets:
+      columns:
         - spy_oauth_access_token.identifier
         - spy_oauth_refresh_token.identifier
         - spy_oauth_client.secret
@@ -218,21 +231,19 @@ privacy:
         - spy_vault_deposit.initial_vector
         - spy_vault_deposit.cipher_text
         # Spryker Eco: PunchOut Gateway and Vertex (optional)
-        - spy_punchout_session.session_token
-        - spy_punchout_session.buyer_cookie
         - spy_vertex_api_access_token.access_token
       entity: API_KEY
       operator: redact
     # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
     mixed-content:
       columns:
+        - spy_oauth_access_token.user_identifier
+        - spy_oauth_refresh_token.user_identifier
         - spy_quote.quote_data
         - spy_quote_request_version.quote
         - spy_quote_request_version.metadata
         - spy_sales_order_amendment_quote.quote_data
         - spy_recurring_schedule.quote_data
-        - spy_oauth_access_token.user_identifier
-        - spy_oauth_refresh_token.user_identifier
         - spy_customer_data_change_request.data
         - spy_product_review_search.data
         - spy_product_review_search.structured_data
@@ -243,7 +254,7 @@ privacy:
         - spy_ai_conversation_history.original_messages
         - spy_ai_interaction_log.prompt
         - spy_ai_interaction_log.response
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
     # Keep: mixed-content columns that hold credentials.
     mixed-content-secrets:
@@ -251,7 +262,9 @@ privacy:
         - spy_event_behavior_entity_change.data
         - spy_configuration_value.value
         - spy_app_config.config
-      entity: API_KEY
+        - spy_customer_multi_factor_auth.configuration
+        - spy_user_multi_factor_auth.configuration
+      entity: MIXED_CONTENT
       operator: redact
 ```
 

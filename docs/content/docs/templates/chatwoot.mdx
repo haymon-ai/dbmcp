@@ -33,8 +33,6 @@ privacy:
         - contacts.name
         - contacts.middle_name
         - contacts.last_name
-        - contacts.identifier
-        - contact_inboxes.source_id
         - users.name
         - users.display_name
         - audits.username
@@ -42,6 +40,12 @@ privacy:
         - channel_email.imap_login
         - channel_email.smtp_login
       entity: PERSON
+      operator: hash
+    user-ids:
+      columns:
+        - contacts.identifier
+        - contact_inboxes.source_id
+      entity: USER_ID
       operator: hash
     phones:
       columns:
@@ -75,6 +79,11 @@ privacy:
         - audits.remote_address
       entity: IP_ADDRESS
       operator: hash
+    user-agents:
+      columns:
+        - user_sessions.user_agent
+      entity: USER_AGENT
+      operator: hash
     text:
       columns:
         - users.message_signature
@@ -85,23 +94,37 @@ privacy:
         - csat_survey_responses.csat_review_notes
         - calls.transcript
         - campaign_recipients.message_content
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
         - users.encrypted_password
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    plaintext-passwords:
+      columns:
+        - channel_email.imap_password
+        - channel_email.smtp_password
+      entity: PASSWORD
+      operator: redact
+    tokens:
       columns:
         - users.reset_password_token
         - users.confirmation_token
         - users.pubsub_token
         - users.tokens
+        - contact_inboxes.pubsub_token
+      entity: AUTH_TOKEN
+      operator: redact
+    otp-secrets:
+      columns:
         - users.otp_secret
         - users.otp_backup_codes
+      entity: OTP_SECRET
+      operator: redact
+    secrets:
+      columns:
         - access_tokens.token
-        - contact_inboxes.pubsub_token
         - notification_subscriptions.identifier
         - notification_subscriptions.subscription_attributes
         - agent_bots.secret
@@ -109,16 +132,12 @@ privacy:
         - channel_api.hmac_token
         - channel_api.secret
         - channel_web_widgets.hmac_token
-        - channel_email.imap_password
-        - channel_email.smtp_password
-        - channel_email.provider_config
         - channel_facebook_pages.user_access_token
         - channel_facebook_pages.page_access_token
         - channel_instagram.access_token
         - channel_line.line_channel_secret
         - channel_line.line_channel_token
         - channel_sms.secret
-        - channel_sms.provider_config
         - channel_telegram.bot_token
         - channel_tiktok.access_token
         - channel_tiktok.refresh_token
@@ -127,14 +146,10 @@ privacy:
         - channel_twitter_profiles.twitter_access_token
         - channel_twitter_profiles.twitter_access_token_secret
         - channel_whatsapp.business_management_token
-        - channel_whatsapp.provider_config
         - integrations_hooks.access_token
-        - integrations_hooks.settings
         - data_imports.access_token
         - shopify_custom_apps.client_secret
-        - captain_mcp_servers.auth_config
         - captain_mcp_servers.oauth_credentials
-        - captain_custom_tools.auth_config
       entity: API_KEY
       operator: redact
     # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
@@ -160,20 +175,31 @@ privacy:
         - copilot_tool_calls.result
         - captain_custom_tools.headers
         - installation_configs.serialized_value
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
+    # Keep: mixed-content columns that hold credentials.
+    mixed-content-secrets:
+      columns:
+        - channel_email.provider_config
+        - channel_sms.provider_config
+        - channel_whatsapp.provider_config
+        - integrations_hooks.settings
+        - captain_mcp_servers.auth_config
+        - captain_custom_tools.auth_config
+      entity: MIXED_CONTENT
+      operator: redact
 ```
 
 **Choices**
 
-- `users.uid` holds the e-mail address for password sign-ins (`emails`); `contact_inboxes.source_id` is a contact's channel address (`names`), so its tokens never match `contacts.email`.
-- Credential-only JSON columns (`provider_config`, `integrations_hooks.settings`, `auth_config`, `oauth_credentials`, `subscription_attributes`) are redacted whole under `secrets`.
+- `users.uid` holds the e-mail address for password sign-ins (`emails`); `contact_inboxes.source_id` is a contact's channel address (`user-ids`), so its tokens never match `contacts.email`.
+- Credential JSON columns (`provider_config`, `integrations_hooks.settings`, `auth_config`) are redacted whole under `mixed-content-secrets`.
 - `attachments.coordinates_lat` and `coordinates_long` are ruled as `LOCATION`; their floats come back as tokens.
 - Channel identifiers are the business's own mailbox, numbers, and IMAP/SMTP logins: personal data only when an agent connects a private mailbox or number.
-- Optional parts: delete the commented channel columns you do not need and the `mixed-content` rules if the assistant needs those columns readable.
+- Optional parts: delete the commented channel columns you do not need and the `mixed-content` rule if the assistant needs those columns readable.
 
 <Callout type="warn">
-Without the `mixed-content` rules, `installation_configs.serialized_value` returns the Facebook, Azure, and other app secrets a super admin entered.
+Without the `mixed-content` rule, `installation_configs.serialized_value` returns the Facebook, Azure, and other app secrets a super admin entered.
 </Callout>
 
 ## Trade-offs
@@ -184,7 +210,7 @@ Without the `mixed-content` rules, `installation_configs.serialized_value` retur
 
 ## Not covered
 
-- `user_sessions.user_agent`, `browser_*`, `device_name`: browser data, no matching data type.
+- `user_sessions.browser_*`, `device_name`: browser data, no matching data type.
 - `attachments.external_url`, `fallback_title`, `active_storage_blobs.filename`: link titles and file names.
 - `campaign_recipients.error_message`, `data_import_*` errors and metadata: provider and import errors.
 - Captain AI tables (`captain_assistant_responses`, `captain_faq_*`, `captain_documents`): AI text derived from conversations.

@@ -102,7 +102,7 @@ privacy:
         - oxorder.OXDELCOMPANY
       entity: ORGANIZATION
       operator: hash
-    tax-ids:
+    vat-numbers:
       columns:
         - oxuser.OXUSTID
         - oxorder.OXBILLUSTID
@@ -122,19 +122,29 @@ privacy:
         - oxshops.OXHRBNR
       entity: COMMERCIAL_REGISTER_DE
       operator: hash
-    bank-accounts:
+    ibans:
       columns:
         # Shop operator details (optional)
         - oxshops.OXIBANNUMBER
-        - oxshops.OXBANKNUMBER
-        - oxshops.OXBANKCODE
       entity: IBAN_CODE
+      operator: hash
+    bank-accounts:
+      columns:
+        # Shop operator details (optional)
+        - oxshops.OXBANKNUMBER
+      entity: BANK_ACCOUNT
       operator: hash
     bics:
       columns:
         # Shop operator details (optional)
         - oxshops.OXBICCODE
       entity: BIC_CODE
+      operator: hash
+    bank-codes:
+      columns:
+        # Shop operator details (optional)
+        - oxshops.OXBANKCODE
+      entity: BANK_CODE
       operator: hash
     birth-dates:
       columns:
@@ -159,7 +169,7 @@ privacy:
         # Reviews and Listmania (optional)
         - oxreviews.OXTEXT
         - oxrecommlists.OXDESC
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
@@ -167,13 +177,17 @@ privacy:
         - oxuser.OXPASSSALT
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    plaintext-passwords:
+      columns:
+        - oxshops.OXSMTPPWD
+      entity: PASSWORD
+      operator: redact
+    tokens:
       columns:
         - oxuser.OXUPDATEKEY
-        - oxshops.OXSMTPPWD
         # Coupon codes (optional)
         - oxvouchers.OXVOUCHERNR
-      entity: API_KEY
+      entity: AUTH_TOKEN
       operator: redact
     # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
     mixed-content:
@@ -182,13 +196,13 @@ privacy:
         - oxorderarticles.OXPERSPARAM
         - oxuserbasketitems.OXPERSPARAM
         - oxadminlog.OXSQL
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
     # Keep: mixed-content columns that hold credentials.
     mixed-content-secrets:
       columns:
         - oxconfig.OXVARVALUE
-      entity: API_KEY
+      entity: MIXED_CONTENT
       operator: redact
 ```
 

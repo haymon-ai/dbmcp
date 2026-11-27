@@ -3,7 +3,7 @@ title: Mautic
 description: Privacy rules for Mautic 5.2 and 6.0 on MySQL and MariaDB
 ---
 
-Covers contacts, companies, tracking hits, admin users, and Mautic's secrets: password hashes, OAuth2 and API tokens, and tracking hashes.
+Covers contacts, companies, tracking hits and ids, admin users, and Mautic's secrets: password hashes and OAuth2 and API tokens.
 
 ## Coverage
 
@@ -190,41 +190,57 @@ privacy:
         - lead_utmtags.remote_host
       entity: IP_ADDRESS
       operator: hash
+    user-ids:
+      columns:
+        - push_ids.push_id
+        - lead_devices.tracking_id
+        - page_hits.tracking_id
+        - form_submissions.tracking_id
+        - asset_downloads.tracking_id
+      entity: USER_ID
+      operator: hash
+    user-agents:
+      columns:
+        - page_hits.user_agent
+        - video_hits.user_agent
+        - lead_utmtags.user_agent
+      entity: USER_AGENT
+      operator: hash
     text:
       columns:
         - lead_notes.text
         - lead_donotcontact.comments
         - users.signature
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
         - users.password
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    tokens:
       columns:
         - user_tokens.secret
+        - email_stats.tracking_hash
+        - sms_message_stats.tracking_hash
+        - push_notification_stats.tracking_hash
+      entity: AUTH_TOKEN
+      operator: redact
+    secrets:
+      columns:
         - oauth2_accesstokens.token
         - oauth2_refreshtokens.token
         - oauth2_authcodes.token
         - oauth2_clients.secret
         - webhooks.secret
         - plugin_integration_settings.api_keys
-        - push_ids.push_id
-        - lead_devices.tracking_id
-        - page_hits.tracking_id
-        - form_submissions.tracking_id
-        - asset_downloads.tracking_id
-        - email_stats.tracking_hash
-        - sms_message_stats.tracking_hash
-        - push_notification_stats.tracking_hash
       entity: API_KEY
       operator: redact
     # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
     mixed-content:
       columns:
         - leads.internal
+        - lead_devices.client_info
         - leads.social_cache
         - companies.social_cache
         - ip_addresses.ip_details
@@ -250,13 +266,13 @@ privacy:
         - integration_entity.internal
         - lead_lists.filters
         - tweet_stats.response_details
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
 ```
 
 **Choices**
 
-- `email_stats.tracking_hash` is a secret: it opens `/email/view/{idHash}`, the sent e-mail with the contact's data. `lead_devices.tracking_id` is the device cookie; the hit tables copy it.
+- `email_stats.tracking_hash` opens `/email/view/{idHash}`, the sent e-mail with the contact's data. `lead_devices.tracking_id` is the device cookie; the hit tables copy it, so their tokens match.
 - `remote_host` holds the client's reverse-DNS name, which embeds the IP, hence `IP_ADDRESS`. Social columns (`leads.facebook` … `twitter`) hold handles, so they sit in `names`.
 - `companies` is ruled like contacts, since many B2B records are sole traders; drop the `companies.*` keys if company data may be shown.
 - Optional parts: delete the commented admin-name and Social plugin columns you do not need, and the `mixed-content` rule to keep those columns readable.
@@ -272,7 +288,6 @@ privacy:
 
 - `users.preferences`, `leads.preferred_profile_image`: UI settings and an avatar source.
 - `companies.companydescription`, `companyindustry`, other firmographics: business data.
-- `user_agent`, `client_info` on hit and device tables: browser data, no matching data type.
 - `email_stat_replies.message_id`, `integration_entity.integration_entity_id`, `sync_object_mapping`: external ids, used as join keys.
 - `imports.original_file`: an uploaded file name; the files live on disk.
 - `cache_items`, Messenger queue tables, third-party plugin tables: content depends on configuration.

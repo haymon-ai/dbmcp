@@ -35,13 +35,22 @@ privacy:
         - users.otp_backup_codes
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    tokens:
       columns:
         - users.reset_password_token
         - users.confirmation_token
         - users.unlock_token
+      entity: AUTH_TOKEN
+      operator: redact
+    otp-secrets:
+      columns:
         # devise-two-factor (optional)
         - users.otp_secret
+      entity: OTP_SECRET
+      operator: redact
+    secrets:
+      columns:
+        # devise-two-factor (optional)
         - users.encrypted_otp_secret
         - users.encrypted_otp_secret_iv
         - users.encrypted_otp_secret_salt

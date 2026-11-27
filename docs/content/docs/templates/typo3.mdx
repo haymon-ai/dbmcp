@@ -128,6 +128,12 @@ privacy:
         - tx_powermail_domain_model_mail.sender_ip
       entity: IP_ADDRESS
       operator: hash
+    user-agents:
+      columns:
+        # powermail (optional)
+        - tx_powermail_domain_model_mail.user_agent
+      entity: USER_AGENT
+      operator: hash
     text:
       columns:
         - fe_users.description
@@ -140,7 +146,7 @@ privacy:
         # powermail (optional)
         - tx_powermail_domain_model_mail.body
         - tx_powermail_domain_model_mail.subject
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
@@ -148,14 +154,19 @@ privacy:
         - be_users.password
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    tokens:
       columns:
         - be_users.password_reset_token
         # System extensions (optional)
         - fe_users.felogin_forgotHash
+        - sys_preview.keyword
+      entity: AUTH_TOKEN
+      operator: redact
+    secrets:
+      columns:
+        # System extensions (optional)
         - sys_reaction.secret
         - sys_webhook.secret
-        - sys_preview.keyword
       entity: API_KEY
       operator: redact
     # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
@@ -173,7 +184,7 @@ privacy:
         # femanager (optional)
         - fe_users.tx_femanager_changerequest
         - tx_femanager_domain_model_log.additional_properties
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
     # Keep: mixed-content columns that hold credentials.
     mixed-content-secrets:
@@ -183,7 +194,7 @@ privacy:
         - be_sessions.ses_data
         - fe_sessions.ses_data
         - sys_webhook.additional_headers
-      entity: API_KEY
+      entity: MIXED_CONTENT
       operator: redact
 ```
 
@@ -214,7 +225,7 @@ Without the `mixed-content` rule, every submitted powermail form value stays rea
 - `sys_file_metadata.publisher`, `source`, `copyright`, `caption`, `description`: editorial text that can name photographers.
 - `sys_http_report.meta`, `details`: CSP reports with anonymized IP, user agent, URLs.
 - `index_stat_word.word`: visitor search terms without a user reference.
-- `tx_powermail_domain_model_mail.user_agent`, `marketing_*`: browser data, no matching data type.
+- `tx_powermail_domain_model_mail.marketing_*`: browser data, no matching data type.
 
 ## Sources
 

@@ -55,7 +55,7 @@ A template may list keys for columns your version or modules lack: they match no
 
 ## Conventions
 
-Every rule states its operator, so a template does not depend on `privacy.operator`. One entity has one operator per template, so a value gets the same token in every column that holds it, and the assistant can match a customer's rows across tables without seeing the value. Rules are named after the data they hold:
+Every rule states its operator, so a template does not depend on `privacy.operator`. A `hash` entity is hashed in every column of a template, so a value gets the same token in every column that holds it, and the assistant can match a customer's rows across tables without seeing the value. Re-copying a `hash` rule whose entity changed changes its tokens ([How values are rewritten](/privacy/rules#how-values-are-rewritten)). Rules are named after the data they hold:
 
 | Data | Rule | Entity | Operator |
 |---|---|---|---|
@@ -64,18 +64,31 @@ Every rule states its operator, so a template does not depend on `privacy.operat
 | Phone numbers | `phones` | `PHONE_NUMBER` | `hash` |
 | IP addresses | `ip-addresses` | `IP_ADDRESS` | `hash` |
 | Street and city, postcodes, companies | `addresses`, `postcodes`, `companies` | `LOCATION`, `POSTCODE`, `ORGANIZATION` | `hash` |
-| VAT and tax numbers, registry numbers, bank accounts, BICs | `tax-ids`, `tax-numbers`, `registry-numbers`, `bank-accounts`, `bics` | `VAT_NUMBER`, `TAX_NUMBER_DE`, `COMMERCIAL_REGISTER_DE`, `IBAN_CODE`, `BIC_CODE` | `hash` |
-| National ids, passports, licence plates | `id-cards`, `passports`, `license-plates`, … | `ID_CARD_DE`, `PASSPORT_US`, `LICENSE_PLATE_DE`, … | `replace` |
+| Provider, visitor, tracking, and device ids; employee and student numbers | `user-ids` | `USER_ID` | `hash` |
+| User agents | `user-agents` | `USER_AGENT` | `hash` |
+| IBANs | `ibans` | `IBAN_CODE` | `hash` |
+| Other bank account numbers | `bank-accounts` | `BANK_ACCOUNT` | `hash` |
+| BICs; sort, branch, and bank codes | `bics`; `bank-codes` | `BIC_CODE`; `BANK_CODE` | `hash` |
+| VAT numbers | `vat-numbers` | `VAT_NUMBER` | `hash` |
+| Other tax ids; German tax numbers | `tax-ids`; `tax-numbers` | `TAX_ID`; `TAX_NUMBER_DE` | `hash` |
+| Registry numbers | `registry-numbers` | `COMMERCIAL_REGISTER_DE` or `COMMERCIAL_REGISTER` (one per page) | `hash` |
+| National ids, passports, residence permits, licence plates | `id-cards`, `passports`, `residence-permits`, `license-plates` | `NATIONAL_ID`, `PASSPORT`, `RESIDENCE_PERMIT`, `LICENSE_PLATE` | `replace` |
+| Social security and insurance numbers | `social-security-numbers` | `SOCIAL_SECURITY` | `replace` |
 | Birth dates, URLs | `birth-dates`, `urls` | `DATE_OF_BIRTH`, `URL` | `replace` |
-| Free text (notes, messages, comments) | `text` | `PERSON` | `replace` |
+| Free text (notes, messages, comments) | `text` | `FREE_TEXT` | `replace` |
+| JSON, serialized, and other mixed-content columns | `mixed-content` | `MIXED_CONTENT` | `replace` |
 | Card numbers, CVVs, eCheck routing numbers | `cards`, `card-codes`, `routing-numbers` | `CREDIT_CARD`, `CVV`, `ROUTING_NUMBER_US` | `redact` |
 | Password hashes | `passwords` | `PASSWORD_HASH` | `redact` |
-| Tokens, API keys, session ids, reset codes, plaintext passwords | `secrets` | `API_KEY` | `redact` |
+| Plaintext passwords, PINs, enrolment keys | `plaintext-passwords` | `PASSWORD` | `redact` |
+| Session, remember-me, reset, invite, and share tokens; opt-in, voucher, and gift card codes | `tokens` | `AUTH_TOKEN` | `redact` |
+| TOTP seeds, backup and one-time codes | `otp-secrets` | `OTP_SECRET` | `redact` |
+| API keys, OAuth tokens, client and webhook secrets, ciphertext, salts | `secrets` | `API_KEY` | `redact` |
+| Payment provider references | `payment-tokens` | `PAYMENT_TOKEN` | `redact` |
+| Push endpoints | `push-endpoints` | `URL` | `redact` |
 | Private keys | `private-keys` | `PRIVATE_KEY` | `redact` |
-| JSON, serialized, and other mixed-content columns | `mixed-content` | `PERSON` | `replace` |
-| Mixed-content columns that hold credentials (settings, sessions) | `mixed-content-secrets` | `API_KEY` | `redact` |
+| Mixed-content columns that hold credentials (settings, sessions, headers) | `mixed-content-secrets` | `MIXED_CONTENT` | `redact` |
 
-A login that is always an e-mail address goes in `emails`, so it gets the same token as the address elsewhere. Entities only label: a ruled column is rewritten whatever its values look like. Until they move to [rule-only](/privacy/data-types#rule-only) entities ([#425](https://github.com/haymon-ai/dbmcp/issues/425)), templates use the closest detected type: `PERSON` for free text and mixed content, `API_KEY` for plaintext passwords and opaque codes, `IBAN_CODE` for bank account numbers and bank codes, `VAT_NUMBER` for other tax ids. Titles, gender, country and region codes, locale, and timestamps stay unruled.
+A login that is always an e-mail address goes in `emails`, so it gets the same token as the address elsewhere. Entities only label: a ruled column is rewritten whatever its values look like, and a query that combines columns of different entities in one output column is refused. Data no recognizer detects gets a [rule-only](/privacy/data-types#rule-only) entity, so it never shares a token with a detected type. Titles, gender, country and region codes, locale, and timestamps stay unruled.
 
 Rule names are generic, so a template's rules clash with your own rules of the same name, and with another template's: merge their `columns` lists instead of pasting a second `emails:`. Two templates for one database can also rule the same column, which stops startup as a repeat: Mastodon is built on Devise, so its template already holds the Devise columns of `users`; paste only one of them.
 

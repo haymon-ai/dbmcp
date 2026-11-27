@@ -47,7 +47,6 @@ privacy:
         - oro_user.first_name
         - oro_user.middle_name
         - oro_user.last_name
-        - oro_user.googleId
         - oro_user_login.username
         - rememberme_token.username
         - oro_customer_user.first_name
@@ -73,9 +72,14 @@ privacy:
         - oro_rfp_request_add_note.author
         - oro_email.from_name
         - oro_email_recipient.name
+      entity: PERSON
+      operator: hash
+    user-ids:
+      columns:
+        - oro_user.googleId
         - oro_oauth2_access_token.user_identifier
         - oro_oauth2_auth_code.user_identifier
-      entity: PERSON
+      entity: USER_ID
       operator: hash
     phones:
       columns:
@@ -146,6 +150,12 @@ privacy:
         - oro_user_impersonation.ip_address
       entity: IP_ADDRESS
       operator: hash
+    user-agents:
+      columns:
+        - oro_user_login.user_agent
+        - oro_customer_user_login.user_agent
+      entity: USER_AGENT
+      operator: hash
     text:
       columns:
         - oro_order.customer_notes
@@ -167,7 +177,7 @@ privacy:
         - oro_email_body.text_body
         - oro_activity_list.subject
         - oro_activity_list.description
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
@@ -179,7 +189,15 @@ privacy:
         - oro_oauth2_client.salt
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    plaintext-passwords:
+      columns:
+        - oro_email_origin.imap_password
+        - oro_integration_transport.fedex_password
+        - oro_integration_transport.ups_api_password
+        - oro_integration_transport.pp_password
+      entity: PASSWORD
+      operator: redact
+    tokens:
       columns:
         - oro_user.confirmation_token
         - oro_user_impersonation.token
@@ -188,26 +206,26 @@ privacy:
         - oro_session.id
         - rememberme_token.series
         - rememberme_token.value
+        - oro_sale_quote.guest_access_id
+      entity: AUTH_TOKEN
+      operator: redact
+    secrets:
+      columns:
         - oro_oauth2_access_token.identifier
         - oro_oauth2_refresh_token.identifier
         - oro_oauth2_auth_code.identifier
-        - oro_email_origin.imap_password
         - oro_email_origin.access_token
         - oro_email_origin.refresh_token
         - oro_payment_transaction.access_token
-        - oro_sale_quote.guest_access_id
         - oro_integration_transport.fedex_key
-        - oro_integration_transport.fedex_password
         - oro_integration_transport.fedex_client_secret
         - oro_integration_transport.fedex_access_token
         - oro_integration_transport.ups_api_key
-        - oro_integration_transport.ups_api_password
         - oro_integration_transport.ups_client_secret
         - oro_integration_transport.ups_access_token
         - oro_integration_transport.pp_partner
         - oro_integration_transport.pp_vendor
         - oro_integration_transport.pp_user
-        - oro_integration_transport.pp_password
         - oro_user_api.api_key
         - oro_customer_user_api.api_key
       entity: API_KEY
@@ -249,9 +267,7 @@ privacy:
         - oro_checkout.completed_data
         - oro_checkout_workflow_state.state_data
         - oro_workflow_item.data
-        - oro_user_login.user_agent
         - oro_user_login.context
-        - oro_customer_user_login.user_agent
         - oro_customer_user_login.context
         - oro_navigation_history.title
         - oro_navigation_history.url
@@ -269,7 +285,7 @@ privacy:
         - oro_search_query.query
         - oro_website_search_result_history.search_term
         - oro_website_search_term_report.search_term
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
     # Keep: mixed-content columns that hold credentials.
     mixed-content-secrets:
@@ -281,7 +297,7 @@ privacy:
         - oro_config_value.text_value
         - oro_config_value.array_value
         - oro_config_value.object_value
-      entity: API_KEY
+      entity: MIXED_CONTENT
       operator: redact
 ```
 
@@ -320,7 +336,6 @@ privacy:
         - oro_user.first_name
         - oro_user.middle_name
         - oro_user.last_name
-        - oro_user.googleId
         - oro_user_login.username
         - rememberme_token.username
         - oro_customer_user.first_name
@@ -346,10 +361,15 @@ privacy:
         - oro_rfp_request_add_note.author
         - oro_email.from_name
         - oro_email_recipient.name
+      entity: PERSON
+      operator: hash
+    user-ids:
+      columns:
+        - oro_user.googleId
         - oro_oauth2_access_token.user_identifier
         - oro_oauth2_auth_code.user_identifier
         - oro_oauth2_session_transfer_token.user_identifier
-      entity: PERSON
+      entity: USER_ID
       operator: hash
     phones:
       columns:
@@ -420,6 +440,12 @@ privacy:
         - oro_user_impersonation.ip_address
       entity: IP_ADDRESS
       operator: hash
+    user-agents:
+      columns:
+        - oro_user_login.user_agent
+        - oro_customer_user_login.user_agent
+      entity: USER_AGENT
+      operator: hash
     text:
       columns:
         - oro_order.customer_notes
@@ -441,7 +467,7 @@ privacy:
         - oro_email_body.text_body
         - oro_activity_list.subject
         - oro_activity_list.description
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
@@ -453,7 +479,15 @@ privacy:
         - oro_oauth2_client.salt
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    plaintext-passwords:
+      columns:
+        - oro_email_origin.imap_password
+        - oro_integration_transport.fedex_password
+        - oro_integration_transport.ups_api_password
+        - oro_integration_transport.pp_password
+      entity: PASSWORD
+      operator: redact
+    tokens:
       columns:
         - oro_user.confirmation_token
         - oro_user_impersonation.token
@@ -462,27 +496,27 @@ privacy:
         - oro_session.id
         - rememberme_token.series
         - rememberme_token.value
+        - oro_sale_quote.guest_access_id
+        - oro_customer_user.new_email_verification_code
+      entity: AUTH_TOKEN
+      operator: redact
+    secrets:
+      columns:
         - oro_oauth2_access_token.identifier
         - oro_oauth2_refresh_token.identifier
         - oro_oauth2_auth_code.identifier
-        - oro_email_origin.imap_password
         - oro_email_origin.access_token
         - oro_email_origin.refresh_token
         - oro_payment_transaction.access_token
-        - oro_sale_quote.guest_access_id
         - oro_integration_transport.fedex_key
-        - oro_integration_transport.fedex_password
         - oro_integration_transport.fedex_client_secret
         - oro_integration_transport.fedex_access_token
         - oro_integration_transport.ups_api_key
-        - oro_integration_transport.ups_api_password
         - oro_integration_transport.ups_client_secret
         - oro_integration_transport.ups_access_token
         - oro_integration_transport.pp_partner
         - oro_integration_transport.pp_vendor
         - oro_integration_transport.pp_user
-        - oro_integration_transport.pp_password
-        - oro_customer_user.new_email_verification_code
         - oro_oauth2_session_transfer_token.identifier
         - oro_oauth2_session_transfer_token.source_access_token_identifier
         - oro_integration_webhook_producer_settings.secret
@@ -525,9 +559,7 @@ privacy:
         - oro_checkout.completed_data
         - oro_checkout_workflow_state.state_data
         - oro_workflow_item.data
-        - oro_user_login.user_agent
         - oro_user_login.context
-        - oro_customer_user_login.user_agent
         - oro_customer_user_login.context
         - oro_navigation_history.title
         - oro_navigation_history.url
@@ -550,7 +582,7 @@ privacy:
         - oro_checkout.additional_data
         - oro_oauth2_session_transfer_token.context_data
         - oro_pdf_generator_pdf_document.pdf_document_payload
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
     # Keep: mixed-content columns that hold credentials.
     mixed-content-secrets:
@@ -563,7 +595,7 @@ privacy:
         - oro_config_value.array_value
         - oro_config_value.object_value
         - oro_payment_transaction.webhook_request_logs
-      entity: API_KEY
+      entity: MIXED_CONTENT
       operator: redact
 ```
 

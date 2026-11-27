@@ -164,27 +164,35 @@ privacy:
         - return_address.companyAdditional
       entity: ORGANIZATION
       operator: hash
-    tax-ids:
+    vat-numbers:
       columns:
         - tkunde.cUSTID
         - trechnungsadresse.cUSTID
       entity: VAT_NUMBER
       operator: hash
-    bank-accounts:
+    ibans:
       columns:
         - tkundenkontodaten.cIBAN
-        - tkundenkontodaten.cBLZ
-        - tkundenkontodaten.nKonto
         - tzahlungsinfo.cIBAN
-        - tzahlungsinfo.cBLZ
-        - tzahlungsinfo.cKontoNr
       entity: IBAN_CODE
+      operator: hash
+    bank-accounts:
+      columns:
+        - tkundenkontodaten.nKonto
+        - tzahlungsinfo.cKontoNr
+      entity: BANK_ACCOUNT
       operator: hash
     bics:
       columns:
         - tkundenkontodaten.cBIC
         - tzahlungsinfo.cBIC
       entity: BIC_CODE
+      operator: hash
+    bank-codes:
+      columns:
+        - tkundenkontodaten.cBLZ
+        - tzahlungsinfo.cBLZ
+      entity: BANK_CODE
       operator: hash
     cards:
       columns:
@@ -206,6 +214,9 @@ privacy:
       columns:
         - tkunde.cWWW
         - trechnungsadresse.cWWW
+        - tbesucher.cReferer
+        - tbesucherarchiv.cReferer
+        - tredirectreferer.cRefererUrl
       entity: URL
       operator: replace
     ip-addresses:
@@ -230,6 +241,13 @@ privacy:
         - reports.remoteIP
       entity: IP_ADDRESS
       operator: hash
+    user-agents:
+      columns:
+        - tbesucher.cUserAgent
+        - tfsession.cAgent
+        - tsitemaptracker.cUserAgent
+      entity: USER_AGENT
+      operator: hash
     text:
       columns:
         - tkontakthistory.cNachricht
@@ -241,7 +259,7 @@ privacy:
         - rma_items.comment
         - emails.bodyHTML
         - emails.bodyText
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
@@ -251,13 +269,14 @@ privacy:
         - tsynclogin.cPass
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    plaintext-passwords:
       columns:
-        - tkunde.c2FAauthSecret
-        - tkunde2facodes.cEmergencyCode
-        - tadminlogin.c2FAauthSecret
+        - ttrustedshopszertifikat.cWSPasswort
+      entity: PASSWORD
+      operator: redact
+    tokens:
+      columns:
         - tadminlogin.cResetPasswordHash
-        - tadmin2facodes.cEmergencyCode
         - tpasswordreset.cKey
         - tnewsletterempfaenger.cOptCode
         - tnewsletterempfaenger.cLoeschCode
@@ -273,10 +292,21 @@ privacy:
         - tzahlungsession.cSID
         - twunschliste.cURLID
         - reports.hash
+      entity: AUTH_TOKEN
+      operator: redact
+    otp-secrets:
+      columns:
+        - tkunde.c2FAauthSecret
+        - tkunde2facodes.cEmergencyCode
+        - tadminlogin.c2FAauthSecret
+        - tadmin2facodes.cEmergencyCode
+      entity: OTP_SECRET
+      operator: redact
+    secrets:
+      columns:
         - api_keys.key
         - tstoreauth.auth_code
         - tstoreauth.access_token
-        - ttrustedshopszertifikat.cWSPasswort
       entity: API_KEY
       operator: redact
     # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
@@ -308,7 +338,7 @@ privacy:
         - tbewertung.cAntwort
         - tnewskommentar.cKommentar
         - rma_history.eventDataJson
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
     # Keep: mixed-content columns that hold credentials.
     mixed-content-secrets:
@@ -317,7 +347,7 @@ privacy:
         - tplugineinstellungen.cWert
         - teinstellungenlog.cEinstellungenWertAlt
         - teinstellungenlog.cEinstellungenWertNeu
-      entity: API_KEY
+      entity: MIXED_CONTENT
       operator: redact
 ```
 
@@ -325,19 +355,18 @@ privacy:
 
 - The card expiry `tzahlungsinfo.cGueltigkeit` is ruled with the card number as `CREDIT_CARD`.
 - `tkuponflag.cEmailHash` (unsalted SHA-256 of the address) and `tbesucher.cID` (MD5 of user agent and IP) are ruled: SQL could confirm a guessed address or IP.
-- Optional parts: delete the `mixed-content` rules if the assistant needs those columns readable; `mixed-content-secrets` covers settings with SMTP, Redis, FTP, and payment credentials.
+- Optional parts: delete the `mixed-content` rule if the assistant needs those columns readable; `mixed-content-secrets` covers settings with SMTP, Redis, FTP, and payment credentials.
 - The shop's own customer and admin fields are rows in `tkundenattribut` and `tadminloginattribut`, ruled under `mixed-content`.
 
 ## Trade-offs
 
-- **Indexed ruled columns:** `tkunde.cMail`, most `cIP` columns, `toptin.cMail`, `kOptinCode`, `tnewsletterempfaengerhistory.cEmail`, `cOptCode`, `tnewsletterempfaengerblacklist.cMail`, `temailblacklist.cEmail`, `tkuponkunde.cMail`, `tkuponflag.cEmailHash`, `tpasswordreset.cKey`, the `cEmergencyCode` columns, session ids, `twunschliste.cURLID`.
+- **Indexed ruled columns:** `tkunde.cMail`, most `cIP` columns, `toptin.cMail`, `kOptinCode`, `tnewsletterempfaengerhistory.cEmail`, `cOptCode`, `tnewsletterempfaengerblacklist.cMail`, `temailblacklist.cEmail`, `tkuponkunde.cMail`, `tkuponflag.cEmailHash`, `tpasswordreset.cKey`, the `cEmergencyCode` columns, session ids, `twunschliste.cURLID`, the `cReferer` columns.
 - **Lookups that stop working:** customers, subscribers and contact requests by e-mail or name; visits and orders by IP; orders grouped by postcode or city.
 - **Join keys that stay unruled:** the `k` ids (`kKunde`, `kBestellung`), `tkunde.cKundenNr` (the JTL-Wawi number), and `tbestellung.cBestellNr`.
 - **Empty values:** JTL stores missing values as `''`, which comes back as a token, so "has a phone number" is unreadable.
 
 ## Not covered
 
-- Referrers and user agents (`tbesucher.cReferer`, `tredirectreferer.cRefererUrl`): browser data, no matching data type.
 - Search terms (`tsuchanfrage.cSuche`, `tsuchanfragencache.cSuche`): statistics; the paired IP is ruled.
 - Tracking and payment references (`tbestellung.cTracking`, `tzahlungsid.txn_id`): needed to reconcile carriers and providers.
 - `tfirma`, `tzahlungseingang.cEmpfaenger`: the merchant's own imprint and account.

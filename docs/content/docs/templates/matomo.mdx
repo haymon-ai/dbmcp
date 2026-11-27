@@ -27,12 +27,6 @@ privacy:
       operator: hash
     names:
       columns:
-        - log_visit.idvisitor
-        - log_visit.config_id
-        - log_visit.user_id
-        - log_link_visit_action.idvisitor
-        - log_conversion.idvisitor
-        - log_conversion_item.idvisitor
         - user.login
         - user.invited_by
         - user_token_auth.login
@@ -51,6 +45,16 @@ privacy:
         - alert.login
         - alert_triggered.login
       entity: PERSON
+      operator: hash
+    user-ids:
+      columns:
+        - log_visit.idvisitor
+        - log_visit.config_id
+        - log_visit.user_id
+        - log_link_visit_action.idvisitor
+        - log_conversion.idvisitor
+        - log_conversion_item.idvisitor
+      entity: USER_ID
       operator: hash
     phones:
       columns:
@@ -84,11 +88,19 @@ privacy:
         - session.id
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    tokens:
+      columns:
+        - report_subscriptions.token
+      entity: AUTH_TOKEN
+      operator: redact
+    otp-secrets:
       columns:
         - user.twofactor_secret
         - twofactor_recovery_code.recovery_code
-        - report_subscriptions.token
+      entity: OTP_SECRET
+      operator: redact
+    secrets:
+      columns:
         # CustomAlerts (optional)
         - alert.ms_teams_webhook_url
         - alert_triggered.ms_teams_webhook_url
@@ -153,13 +165,13 @@ privacy:
         - log_conversion.custom_var_v4
         - log_conversion.custom_var_k5
         - log_conversion.custom_var_v5
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
 ```
 
 **Choices**
 
-- `idvisitor` and `config_id` are the visitor id and fingerprint, ruled `PERSON` like logins.
+- `idvisitor` and `config_id` are the visitor id and fingerprint.
 - `location_ip` is binary, so its token differs from `brute_force_log.ip_address` for the same IP; `INET6_NTOA(location_ip)` returns a placeholder.
 - `user_token_auth.password`, `invite_token`, `invite_link_token`, and `session.id` hold salted token hashes, hence `PASSWORD_HASH`. CustomAlerts' Teams webhook URLs carry a secret, hence `secrets`.
 - Optional parts: delete the CustomAlerts columns if you removed that plugin, and the `mixed-content` rule to keep those columns readable.

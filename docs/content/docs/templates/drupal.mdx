@@ -73,7 +73,7 @@ privacy:
         # Drupal Commerce (optional)
         - profile__tax_number.tax_number_value
         - profile_revision__tax_number.tax_number_value
-      entity: VAT_NUMBER
+      entity: TAX_ID
       operator: hash
     urls:
       columns:
@@ -97,19 +97,23 @@ privacy:
       columns:
         # Drupal Commerce (optional)
         - commerce_order.customer_comments
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
         - users_field_data.pass
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    tokens:
       columns:
         - sessions.sid
+      entity: AUTH_TOKEN
+      operator: redact
+    payment-tokens:
+      columns:
         # Drupal Commerce (optional)
         - commerce_payment_method.remote_id
-      entity: API_KEY
+      entity: PAYMENT_TOKEN
       operator: redact
     # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
     mixed-content:
@@ -131,7 +135,7 @@ privacy:
         - commerce_log.params
         - profile__tax_number.tax_number_verification_result
         - profile_revision__tax_number.tax_number_verification_result
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
 ```
 
@@ -139,7 +143,7 @@ privacy:
 
 - `watchdog.location` and `referer` are full URLs, which carry one-time login links (`/user/reset/…`). `users_field_data.init` is the e-mail address the account was created with.
 - `flood.identifier` holds the IP or `<uid>-<ip>`; the combined form gets another token than the plain IP.
-- `commerce_payment_method.remote_id` is the gateway's reusable token for a stored card or account, so it sits in `secrets`.
+- `commerce_payment_method.remote_id` is the gateway's reusable token for a stored card or account.
 - Optional parts: delete the Drupal Commerce columns if you do not run it, and the `mixed-content` rule to keep those columns readable.
 - Your own fields live in `<entity_type>__<field_name>` (and `_revision__`), columns `<field_name>_<property>`; add each to the rule for its data type.
 

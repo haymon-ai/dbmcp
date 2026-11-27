@@ -88,7 +88,7 @@ privacy:
         - account_customernote.content
         - order_order.customer_note
         - checkout_checkout.note
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
@@ -96,11 +96,15 @@ privacy:
         - app_apptoken.auth_token
       entity: PASSWORD_HASH
       operator: redact
+    tokens:
+      columns:
+        - giftcard_giftcard.code
+      entity: AUTH_TOKEN
+      operator: redact
     secrets:
       columns:
         - account_user.jwt_token_key
         - webhook_webhook.secret_key
-        - giftcard_giftcard.code
       entity: API_KEY
       operator: redact
     # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
@@ -135,7 +139,7 @@ privacy:
         - payment_transaction.action_required_data
         - core_eventpayload.payload
         - core_eventdeliveryattempt.response
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
     # Keep: mixed-content columns that hold credentials.
     mixed-content-secrets:
@@ -145,7 +149,7 @@ privacy:
         - plugins_pluginconfiguration.configuration
         - core_eventdeliveryattempt.request_headers
         - core_eventdeliveryattempt.response_headers
-      entity: API_KEY
+      entity: MIXED_CONTENT
       operator: redact
 ```
 
@@ -153,11 +157,11 @@ privacy:
 
 - `cc_first_digits` and `cc_last_digits` hold the card's BIN and last four digits, not full numbers.
 - `app_apptoken.auth_token` is stored through Django's `make_password`, so it is a password hash.
-- `account_user.jwt_token_key` revokes a user's JWTs, `webhook_webhook.secret_key` signs payloads, and a gift card `code` is spendable: all `secrets`.
+- `account_user.jwt_token_key` revokes a user's JWTs and `webhook_webhook.secret_key` signs payloads (`secrets`); a gift card `code` is spendable (`tokens`).
 - Optional parts: delete the `mixed-content` rule if the assistant needs search, metadata, event, or webhook columns readable; keep `mixed-content-secrets`.
 
 <Callout type="warn">
-`giftcard_giftcard.search_vector` holds every gift card's full code. Without the `mixed-content-secrets` rule, the codes `secrets` redacts stay readable there.
+`giftcard_giftcard.search_vector` holds every gift card's full code. Without the `mixed-content-secrets` rule, the codes `tokens` redacts stay readable there.
 </Callout>
 
 ## Trade-offs

@@ -43,8 +43,12 @@ privacy:
         - sylius_admin_user.username
         - sylius_admin_user.username_canonical
         - sylius_address_log_entries.username
-        - sylius_user_oauth.identifier          # account id at the OAuth provider
       entity: PERSON
+      operator: hash
+    user-ids:
+      columns:
+        - sylius_user_oauth.identifier          # account id at the OAuth provider
+      entity: USER_ID
       operator: hash
     phones:
       columns:
@@ -82,7 +86,7 @@ privacy:
       columns:
         # Shop contact and billing data (optional)
         - sylius_shop_billing_data.tax_id
-      entity: VAT_NUMBER
+      entity: TAX_ID
       operator: hash
     birth-dates:
       columns:
@@ -99,7 +103,7 @@ privacy:
         - sylius_order.notes
         - sylius_product_review.title
         - sylius_product_review.comment
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
@@ -107,18 +111,22 @@ privacy:
         - sylius_admin_user.password
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    tokens:
       columns:
         - sylius_shop_user.password_reset_token
         - sylius_shop_user.email_verification_token
         - sylius_admin_user.password_reset_token
         - sylius_admin_user.email_verification_token
-        - sylius_user_oauth.access_token
-        - sylius_user_oauth.refresh_token
         - sylius_order.token_value              # cart/order token of the Shop API
         - sylius_payment_security_token.hash    # Payum capture/notify token
         - sylius_payment_security_token.after_url
         - sylius_payment_security_token.target_url
+      entity: AUTH_TOKEN
+      operator: redact
+    secrets:
+      columns:
+        - sylius_user_oauth.access_token
+        - sylius_user_oauth.refresh_token
       entity: API_KEY
       operator: redact
     # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
@@ -131,19 +139,19 @@ privacy:
         - sylius_address_log_entries.data
         - messenger_messages.body
         - messenger_messages.headers
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
     # Keep: mixed-content columns that hold credentials.
     mixed-content-secrets:
       columns:
         - sylius_gateway_config.config
-      entity: API_KEY
+      entity: MIXED_CONTENT
       operator: redact
 ```
 
 **Choices**
 
-- `sylius_order.token_value` lets its holder read and change a guest cart through the Shop API; the Payum token URLs embed the token `hash`. All are `secrets`.
+- `sylius_order.token_value` lets its holder read and change a guest cart through the Shop API; the Payum token URLs embed the token `hash`.
 - `sylius_shop_user.email` is usually empty (`ShopUser` uses `sylius_customer`) but ruled.
 - The shop contact and billing columns (`sylius_channel`, `sylius_shop_billing_data`) matter when a sole trader runs the shop.
 - Optional parts: delete the commented shop columns you do not need and the `mixed-content` rule if the assistant needs those columns readable; keep `mixed-content-secrets` (gateway credentials).

@@ -75,7 +75,7 @@ privacy:
       columns:
         - user.description
         - external_login_user.description
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
@@ -86,21 +86,33 @@ privacy:
         - oauth2_application.client_secret
       entity: PASSWORD_HASH
       operator: redact
+    tokens:
+      columns:
+        - session.key
+        - team_invite.token
+        # Gitea only
+        - auth_token.token_hash
+        # Forgejo only
+        - forgejo_auth_token.hashed_validator
+      entity: AUTH_TOKEN
+      operator: redact
+    otp-secrets:
+      columns:
+        - two_factor.secret
+        - two_factor.last_used_passcode
+      entity: OTP_SECRET
+      operator: redact
     secrets:
       columns:
         - user.rands
         - access_token.token_hash
         - access_token.token_salt
         - access_token.token_last_eight
-        - two_factor.secret
-        - two_factor.last_used_passcode
         - external_login_user.access_token
         - external_login_user.access_token_secret
         - external_login_user.refresh_token
-        - session.key
         - oauth2_authorization_code.code
         - oauth2_authorization_code.code_challenge
-        - team_invite.token
         - webhook.secret
         - webhook.header_authorization_encrypted
         - secret.data
@@ -111,10 +123,8 @@ privacy:
         - action_task.token_salt
         - action_task.token_last_eight
         # Gitea only
-        - auth_token.token_hash
         - deploy_key.token_hash
         # Forgejo only
-        - forgejo_auth_token.hashed_validator
         - mirror.encrypted_remote_address
       entity: API_KEY
       operator: redact
@@ -136,7 +146,7 @@ privacy:
         # Forgejo only
         - abuse_report_shadow_copy.raw_value
         - forgejo_auth_token.purpose
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
     # Keep: mixed-content columns that hold credentials.
     mixed-content-secrets:
@@ -147,7 +157,7 @@ privacy:
         - webhook.url
         - mirror.remote_address
         - push_mirror.remote_address
-      entity: API_KEY
+      entity: MIXED_CONTENT
       operator: redact
 ```
 
@@ -157,7 +167,7 @@ privacy:
 - `email_hash.hash` is an e-mail address's avatar hash, computable from a guessed address, so it is `EMAIL_ADDRESS`.
 - `original_author` on issues, comments, releases, and reactions holds usernames of authors migrated from GitHub, GitLab, and others.
 - `user.rands` seeds activation and reset codes; `oauth2_application.client_secret` is a bcrypt hash, so `PASSWORD_HASH`.
-- Optional parts: delete the fork-only columns you do not run and the `mixed-content` rules if the assistant needs those columns readable. `mixed-content-secrets` holds LDAP bind passwords and credential URLs.
+- Optional parts: delete the fork-only columns you do not run and the `mixed-content` rule if the assistant needs those columns readable. `mixed-content-secrets` holds LDAP bind passwords and credential URLs.
 
 ## Trade-offs
 
