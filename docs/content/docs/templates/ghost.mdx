@@ -79,6 +79,11 @@ privacy:
         - user_sessions.ip_address
       entity: IP_ADDRESS
       operator: hash
+    user-agents:
+      columns:
+        - user_sessions.user_agent
+      entity: USER_AGENT
+      operator: hash
     text:
       columns:
         - members.note
@@ -87,7 +92,7 @@ privacy:
         - gifts.personal_message
         # Staff public profiles (optional)
         - users.bio
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
@@ -95,24 +100,32 @@ privacy:
         - user_accounts.password
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    tokens:
       columns:
-        - api_keys.secret
-        - webhooks.secret
+        - members.transient_id
         - tokens.token
         - invites.token
         - sessions.session_id
-        - members.transient_id
         - user_sessions.token
-        - user_accounts.access_token
-        - user_accounts.refresh_token
-        - user_accounts.id_token
-        - user_two_factors.secret
-        - user_two_factors.backup_codes
         - verifications.value
         - gifts.token
         - gift_links.token
         - post_gift_links.gift_link_token
+      entity: AUTH_TOKEN
+      operator: redact
+    otp-secrets:
+      columns:
+        - user_two_factors.secret
+        - user_two_factors.backup_codes
+      entity: OTP_SECRET
+      operator: redact
+    secrets:
+      columns:
+        - api_keys.secret
+        - webhooks.secret
+        - user_accounts.access_token
+        - user_accounts.refresh_token
+        - user_accounts.id_token
       entity: API_KEY
       operator: redact
     # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
@@ -125,13 +138,13 @@ privacy:
         - email_recipient_failures.message
         - members_metafield_values.value_text
         - actions.context
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
     # Keep: mixed-content columns that hold credentials.
     mixed-content-secrets:
       columns:
         - settings.value
-      entity: API_KEY
+      entity: MIXED_CONTENT
       operator: redact
 ```
 
@@ -139,7 +152,7 @@ privacy:
 
 - `members.geolocation` is a JSON string of the country and region looked up from the sign-up IP.
 - Sender addresses are set by staff and can be a person's; `automated_emails` is the pre-6.30 name of `welcome_email_automated_emails`.
-- Optional parts: delete the commented staff-profile and sender-address columns you want readable, and the `mixed-content` rules if the assistant needs those columns readable.
+- Optional parts: delete the commented staff-profile and sender-address columns you want readable, and the `mixed-content` rule if the assistant needs those columns readable.
 - Custom member field values sit in `members_metafield_values.value_text`, ruled under `mixed-content`.
 
 <Callout type="warn">
@@ -154,7 +167,7 @@ Without `mixed-content-secrets`, `SELECT value FROM settings` returns Ghost's St
 
 ## Not covered
 
-- `user_sessions.user_agent`, `origin`: browser data, no matching data type.
+- `user_sessions.origin`: browser data, no matching data type.
 - Stripe references (`gifts.stripe_checkout_session_id`, `subscriptions.payment_user_url`): ids and links, not personal by themselves.
 - `referrer_url`, `attribution_url`, `utm_*`: describe the page and campaign, not the person.
 - `emails.from`, `emails.reply_to`, `sender_reply_to`: a name-and-address string or a keyword.

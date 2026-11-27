@@ -70,13 +70,21 @@ privacy:
         - address.company
       entity: ORGANIZATION
       operator: hash
-    tax-ids:
+    vat-numbers:
       columns:
         - address.vat_number
-        - address.dni
-        - customer.siret
       entity: VAT_NUMBER
       operator: hash
+    registry-numbers:
+      columns:
+        - customer.siret
+      entity: COMMERCIAL_REGISTER
+      operator: hash
+    id-cards:
+      columns:
+        - address.dni
+      entity: NATIONAL_ID
+      operator: replace
     birth-dates:
       columns:
         - customer.birthday
@@ -104,6 +112,11 @@ privacy:
         - emailsubscription.ip_registration_newsletter
       entity: IP_ADDRESS
       operator: hash
+    user-agents:
+      columns:
+        - customer_message.user_agent
+      entity: USER_AGENT
+      operator: hash
     text:
       columns:
         - customer.note
@@ -118,7 +131,7 @@ privacy:
         # Product reviews (productcomments) (optional)
         - product_comment.title
         - product_comment.content
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
@@ -127,7 +140,7 @@ privacy:
         - referrer.passwd             # 1.7 only
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    tokens:
       columns:
         - customer.secure_key
         - cart.secure_key
@@ -138,6 +151,10 @@ privacy:
         - employee_session.token
         - customer_thread.token
         - order_detail.download_hash
+      entity: AUTH_TOKEN
+      operator: redact
+    secrets:
+      columns:
         - webservice_account.key
         - api_access.client_secret    # 8.1–8.2
         - api_client.client_secret    # 9.0+
@@ -148,7 +165,7 @@ privacy:
       columns:
         - cart.checkout_session_data
         - log.message
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
 ```
 
@@ -156,7 +173,7 @@ privacy:
 
 - `secure_key` on `customer`, `cart`, and `orders` is a random key carried in order-confirmation and guest-tracking links.
 - `webservice_account.key` and `customer_message.read` are reserved words: the assistant's SQL must quote them with backticks.
-- Optional parts: delete the commented module columns you do not run and the `mixed-content` rules if the assistant needs those columns readable.
+- Optional parts: delete the commented module columns you do not run and the `mixed-content` rule if the assistant needs those columns readable.
 - `emailsubscription` holds newsletter sign-ups without a customer account; account holders' sign-ups are in `customer`.
 
 ## Trade-offs
@@ -169,7 +186,7 @@ privacy:
 ## Not covered
 
 - `customer.ape`, `last_passwd_gen`, `*.reset_password_validity`: activity code and timestamps.
-- `customer_message.user_agent`, `file_name`, the `guest` table: device details.
+- `customer_message.file_name`, the `guest` table: device details.
 - `connections_source.keywords`: the referring search engine's search terms.
 - `mail.subject`: template subjects.
 - `contact`, `store`, `supplier`, `manufacturer`, `warehouse`: the shop's own contact data.

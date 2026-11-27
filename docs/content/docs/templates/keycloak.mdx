@@ -30,12 +30,16 @@ privacy:
         - user_entity.username
         - user_entity.first_name
         - user_entity.last_name
-        - federated_identity.federated_user_id
         - federated_identity.federated_username
-        - broker_link.broker_user_id
         - broker_link.broker_username
         - username_login_failure.username
       entity: PERSON
+      operator: hash
+    user-ids:
+      columns:
+        - federated_identity.federated_user_id
+        - broker_link.broker_user_id
+      entity: USER_ID
       operator: hash
     companies:
       columns:
@@ -58,7 +62,7 @@ privacy:
         - fed_user_credential.user_label
         # Organizations (optional)
         - org.description
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
@@ -94,7 +98,7 @@ privacy:
         - offline_client_session.data
         - credential.credential_data
         - fed_user_credential.credential_data
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
     # Keep: mixed-content columns that hold credentials.
     mixed-content-secrets:
@@ -104,7 +108,7 @@ privacy:
         - identity_provider_config.value
         - realm_smtp_config.value
         - user_federation_config.value
-      entity: API_KEY
+      entity: MIXED_CONTENT
       operator: redact
 ```
 
@@ -125,11 +129,15 @@ privacy:
         - user_entity.username
         - user_entity.first_name
         - user_entity.last_name
-        - federated_identity.federated_user_id
         - federated_identity.federated_username
-        - broker_link.broker_user_id
         - broker_link.broker_username
       entity: PERSON
+      operator: hash
+    user-ids:
+      columns:
+        - federated_identity.federated_user_id
+        - broker_link.broker_user_id
+      entity: USER_ID
       operator: hash
     companies:
       columns:
@@ -151,7 +159,7 @@ privacy:
         - fed_user_credential.user_label
         # Organizations (optional)
         - org.description
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
@@ -188,7 +196,7 @@ privacy:
         - credential.credential_data
         - fed_user_credential.credential_data
         - admin_event_entity.details_json
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
     # Keep: mixed-content columns that hold credentials.
     mixed-content-secrets:
@@ -198,7 +206,7 @@ privacy:
         - identity_provider_config.value
         - realm_smtp_config.value
         - user_federation_config.value
-      entity: API_KEY
+      entity: MIXED_CONTENT
       operator: redact
 ```
 
@@ -221,14 +229,18 @@ privacy:
         - user_entity.username
         - user_entity.first_name
         - user_entity.last_name
-        - federated_identity.federated_user_id
         - federated_identity.federated_username
-        - broker_link.broker_user_id
         - broker_link.broker_username
         # Organizations (optional)
         - org_invitation.first_name
         - org_invitation.last_name
       entity: PERSON
+      operator: hash
+    user-ids:
+      columns:
+        - federated_identity.federated_user_id
+        - broker_link.broker_user_id
+      entity: USER_ID
       operator: hash
     companies:
       columns:
@@ -250,7 +262,7 @@ privacy:
         - fed_user_credential.user_label
         # Organizations (optional)
         - org.description
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
@@ -260,14 +272,18 @@ privacy:
         - fed_user_credential.salt
       entity: PASSWORD_HASH
       operator: redact
+    tokens:
+      columns:
+        # Organizations (optional)
+        - org_invitation.invite_link
+      entity: AUTH_TOKEN
+      operator: redact
     secrets:
       columns:
         - client.secret
         - client.registration_token
         - federated_identity.token
         - broker_link.token
-        # Organizations (optional)
-        - org_invitation.invite_link
       entity: API_KEY
       operator: redact
     # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
@@ -289,7 +305,7 @@ privacy:
         - credential.credential_data
         - fed_user_credential.credential_data
         - admin_event_entity.details_json
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
     # Keep: mixed-content columns that hold credentials.
     mixed-content-secrets:
@@ -299,7 +315,7 @@ privacy:
         - identity_provider_config.value
         - realm_smtp_config.value
         - user_federation_config.value
-      entity: API_KEY
+      entity: MIXED_CONTENT
       operator: redact
 ```
 
@@ -322,14 +338,18 @@ privacy:
         - user_entity.username
         - user_entity.first_name
         - user_entity.last_name
-        - federated_identity.federated_user_id
         - federated_identity.federated_username
-        - broker_link.broker_user_id
         - broker_link.broker_username
         # Organizations (optional)
         - org_invitation.first_name
         - org_invitation.last_name
       entity: PERSON
+      operator: hash
+    user-ids:
+      columns:
+        - federated_identity.federated_user_id
+        - broker_link.broker_user_id
+      entity: USER_ID
       operator: hash
     companies:
       columns:
@@ -352,7 +372,7 @@ privacy:
         - fed_user_credential.user_label
         # Organizations (optional)
         - org.description
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
@@ -362,14 +382,18 @@ privacy:
         - fed_user_credential.salt
       entity: PASSWORD_HASH
       operator: redact
+    tokens:
+      columns:
+        # Organizations (optional)
+        - org_invitation.invite_link
+      entity: AUTH_TOKEN
+      operator: redact
     secrets:
       columns:
         - client.secret
         - client.registration_token
         - federated_identity.token
         - broker_link.token
-        # Organizations (optional)
-        - org_invitation.invite_link
       entity: API_KEY
       operator: redact
     # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
@@ -401,7 +425,7 @@ privacy:
         - fed_user_ver_credential.user_attributes
         - outbox_entry.payload
         - outbox_entry.metadata
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
     # Keep: mixed-content columns that hold credentials.
     mixed-content-secrets:
@@ -411,7 +435,7 @@ privacy:
         - identity_provider_config.value
         - realm_smtp_config.value
         - user_federation_config.value
-      entity: API_KEY
+      entity: MIXED_CONTENT
       operator: redact
 ```
 
@@ -423,7 +447,7 @@ privacy:
 - `credential.secret_data` holds password hashes, OTP shared secrets, and other credential secrets, so it is redacted whatever the `type`.
 - `user_entity.email_constraint` copies the e-mail address while duplicate e-mails are disallowed, otherwise a random id.
 - Keys match any table-name case, but queries under MySQL `lower_case_table_names = 0` must say `USER_ENTITY`.
-- Optional parts: delete the commented Organizations columns if you do not use organizations, and the `mixed-content` rules if the assistant needs those columns readable.
+- Optional parts: delete the commented Organizations columns if you do not use organizations, and the `mixed-content` rule if the assistant needs those columns readable.
 - `mixed-content-secrets` holds LDAP bind credentials, realm keys, and client and SMTP secrets; `long_value_hash*` in `mixed-content` are unsalted digests of attribute values.
 
 ## Trade-offs
@@ -434,7 +458,7 @@ privacy:
 
 ## Not covered
 
-- `event_entity.session_id`, `user_session_id`, `broker_session_id`, `root_auth_session.id`: join keys; rule as `API_KEY` against session replay.
+- `event_entity.session_id`, `user_session_id`, `broker_session_id`, `root_auth_session.id`: join keys; rule as `AUTH_TOKEN` against session replay.
 - `fed_*` `user_id` columns: opaque unless your storage provider uses usernames.
 - `realm_attribute.value`, `realm_localizations.texts`, `*_mapper_config.value`, `required_action_config.value`, group, role, and client-scope attributes: realm configuration.
 - `server_config.value`, `cluster_event.event_data`: server-internal state.

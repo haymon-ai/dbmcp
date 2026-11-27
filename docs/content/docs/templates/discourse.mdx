@@ -100,13 +100,23 @@ privacy:
         - browser_pageview_events_backup.ip_address
       entity: IP_ADDRESS
       operator: hash
+    user-agents:
+      columns:
+        - user_auth_tokens.user_agent
+        - user_auth_token_logs.user_agent
+        - search_logs.user_agent
+        - post_stats.writing_device_user_agent
+        - browser_pageview_events.user_agent
+        - browser_pageview_events_backup.user_agent
+      entity: USER_AGENT
+      operator: hash
     text:
       columns:
         - user_profiles.bio_raw
         - user_profiles.bio_cooked
         # Bundled plugins (optional)
         - blog_review_feedback.message
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
@@ -114,27 +124,41 @@ privacy:
         - user_passwords.password_salt
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    plaintext-passwords:
       columns:
-        - api_keys.key_hash
-        - api_keys.truncated_key
-        - user_api_keys.key_hash
+        - groups.email_password
+      entity: PASSWORD
+      operator: redact
+    tokens:
+      columns:
         - user_auth_tokens.auth_token
         - user_auth_tokens.prev_auth_token
         - user_auth_token_logs.auth_token
         - retired_user_auth_tokens.token_hash
         - retired_user_auth_tokens.previous_token_hash
         - email_tokens.token_hash
-        - email_login_codes.code_hash
         - invites.invite_key
         - invites.email_token
         - unsubscribe_keys.key
         - post_reply_keys.reply_key
+        # Bundled plugins (optional)
+        - ai_artifact_shares.share_key
+        - shared_ai_conversations.share_key
+        - blog_reviews.token
+      entity: AUTH_TOKEN
+      operator: redact
+    otp-secrets:
+      columns:
+        - email_login_codes.code_hash
         - user_second_factors.data
-        - user_associated_accounts.credentials
-        - push_subscriptions.data
+      entity: OTP_SECRET
+      operator: redact
+    secrets:
+      columns:
+        - api_keys.key_hash
+        - api_keys.truncated_key
+        - user_api_keys.key_hash
         - web_hooks.secret
-        - groups.email_password
         - mcp_oauth_access_tokens.token_hash
         - mcp_oauth_refresh_tokens.token_hash
         - mcp_oauth_authorization_codes.code_hash
@@ -145,11 +169,7 @@ privacy:
         - decision_models.api_key
         - ai_mcp_oauth_tokens.access_token
         - ai_mcp_oauth_tokens.refresh_token
-        - ai_artifact_shares.share_key
-        - shared_ai_conversations.share_key
         - incoming_chat_webhooks.key
-        - discourse_workflows_credentials.data
-        - blog_reviews.token
         - blog_publications.schedule_token
       entity: API_KEY
       operator: redact
@@ -182,13 +202,17 @@ privacy:
         - message_bus.data
         - ai_api_audit_logs.raw_request_payload
         - ai_api_audit_logs.raw_response_payload
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
     # Keep: mixed-content columns that hold credentials.
     mixed-content-secrets:
       columns:
         - site_settings.value
-      entity: API_KEY
+        - user_associated_accounts.credentials
+        - push_subscriptions.data
+        # Bundled plugins (optional)
+        - discourse_workflows_credentials.data
+      entity: MIXED_CONTENT
       operator: redact
 ```
 
@@ -198,15 +222,15 @@ privacy:
 - Stored token hashes (`key_hash`, `auth_token`, `token_hash`, `code_hash`) are redacted: a hash is enough to look the row up.
 - Address lists (`cc_addresses`, `bcc_addresses`, `to_addresses`) are hashed whole: a list's token never equals one address's token.
 - Bundled plugins ship in core; a disabled plugin's tables exist once its migrations have run, so keep their columns unless the plugin never ran.
-- Optional parts: delete the commented plugin columns you do not need and the `mixed-content` rules if the assistant needs those columns readable.
+- Optional parts: delete the commented plugin columns you do not need and the `mixed-content` rule if the assistant needs those columns readable.
 
 <Callout type="warn">
-Without `mixed-content-secrets`, `site_settings.value` returns OAuth client secrets and storage keys set in the admin panel.
+Without `mixed-content-secrets`, `site_settings.value` returns OAuth client secrets and storage keys set in the admin panel, and `user_associated_accounts.credentials` returns users' provider tokens.
 </Callout>
 
 ## Trade-offs
 
-- **Indexed ruled columns:** `users.username`, `username_lower`, `ip_address`; `user_emails.email`, `normalized_email`; `screened_emails.email`; `screened_ip_addresses.ip_address`; `invites.email`; `user_search_data.search_data`; most token columns; `notifications.data` (mixed-content); plugin share keys.
+- **Indexed ruled columns:** `users.username`, `username_lower`, `ip_address`; `user_emails.email`, `normalized_email`; `screened_emails.email`; `screened_ip_addresses.ip_address`; `invites.email`; most token columns; `user_search_data.search_data`, `notifications.data` (mixed-content); plugin share keys.
 - **Lookups that stop working:** a user by username or e-mail, accounts sharing an IP, matching `screened_ip_addresses`, a session by token, user search.
 - **Join keys that stay unruled:** `id` and `user_id` columns, plus `user_histories.acting_user_id` and `target_user_id`.
 - **Multisite:** each site has its own database; run one <Dbmcp /> config per site with that site's `database.name`.
@@ -214,7 +238,7 @@ Without `mixed-content-secrets`, `site_settings.value` returns OAuth client secr
 ## Not covered
 
 - `posts.raw`, `cooked`, `post_revisions`, `chat_messages.message`, `drafts.data`: user content.
-- `user_auth_tokens.user_agent` and the other `user_agent` columns: browser data, no matching data type.
+- `web_crawler_requests.user_agent`: crawler user agents, counted per day.
 - `search_logs.term`: search queries, mostly topics.
 - `user_associated_accounts.provider_uid`, `single_sign_on_records.external_id`: join keys to identity providers.
 - `users.title`, `user_statuses.description`: labels the user chooses.

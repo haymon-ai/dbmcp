@@ -33,30 +33,30 @@ privacy:
         - auth_user.password
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    tokens:
       columns:
         - django_session.session_key
-      entity: API_KEY
+      entity: AUTH_TOKEN
       operator: redact
     # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
     mixed-content:
       columns:
         - django_admin_log.object_repr
         - django_admin_log.change_message
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
     # Keep: mixed-content columns that hold credentials.
     mixed-content-secrets:
       columns:
         - django_session.session_data
-      entity: API_KEY
+      entity: MIXED_CONTENT
       operator: redact
 ```
 
 **Choices**
 
 - `django_session` rules apply only with the database session engine (`db` or `cached_db`); cache and signed-cookie sessions store nothing in the database.
-- Optional parts: delete the `mixed-content` rules if the assistant needs those columns readable.
+- Optional parts: delete the `mixed-content` rule if the assistant needs those columns readable.
 - `django_session.session_data` is signed but unencrypted JSON holding the user id and project data; `django_admin_log.object_repr` is each edited object's `str()`, often a name.
 - With `AUTH_USER_MODEL`, the user table is `<app_label>_<model>` (`accounts.User` gives `accounts_user`); add its columns to the matching rules. Of these columns, an `AbstractBaseUser` subclass has only `password`.
 

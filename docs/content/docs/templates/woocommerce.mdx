@@ -83,30 +83,48 @@ privacy:
         - registration_log.IP
       entity: IP_ADDRESS
       operator: hash
+    user-agents:
+      columns:
+        - wc_orders.user_agent
+        - comments.comment_agent
+      entity: USER_AGENT
+      operator: hash
     text:
       columns:
         - comments.comment_content
         - wc_orders.customer_note
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
         - users.user_pass
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    plaintext-passwords:
+      columns:
+        - posts.post_password
+      entity: PASSWORD
+      operator: redact
+    tokens:
       columns:
         - users.user_activation_key
         - signups.activation_key
-        - posts.post_password
         - wc_order_operational_data.order_key
         - woocommerce_downloadable_product_permissions.order_key
+      entity: AUTH_TOKEN
+      operator: redact
+    secrets:
+      columns:
         - woocommerce_api_keys.consumer_key
         - woocommerce_api_keys.consumer_secret
         - woocommerce_api_keys.truncated_key
-        - woocommerce_payment_tokens.token
         - wc_webhooks.secret
       entity: API_KEY
+      operator: redact
+    payment-tokens:
+      columns:
+        - woocommerce_payment_tokens.token
+      entity: PAYMENT_TOKEN
       operator: redact
     # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
     mixed-content:
@@ -119,13 +137,13 @@ privacy:
         - woocommerce_log.message
         - woocommerce_log.context
         - signups.meta
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
     # Keep: mixed-content columns that hold credentials.
     mixed-content-secrets:
       columns:
         - options.option_value
-      entity: API_KEY
+      entity: MIXED_CONTENT
       operator: redact
 ```
 
@@ -145,7 +163,6 @@ privacy:
 
 ## Not covered
 
-- `wc_orders.user_agent`, `comments.comment_agent`: browser data, no matching data type.
 - `wc_orders.transaction_id`, `payment_method`: payment references, not personal by themselves.
 - `woocommerce_payment_tokenmeta.meta_value`: card type, last four digits, expiry; no partial-card entity.
 - `woocommerce_order_itemmeta.meta_value`, `order_item_name`: product line data; add-on plugins store customer input there.

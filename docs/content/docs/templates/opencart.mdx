@@ -100,18 +100,22 @@ privacy:
     tax-ids:
       columns:
         - customer_affiliate.tax
-      entity: VAT_NUMBER
+      entity: TAX_ID
       operator: hash
     bank-accounts:
       columns:
         - customer_affiliate.bank_account_number
-        - customer_affiliate.bank_branch_number
-      entity: IBAN_CODE
+      entity: BANK_ACCOUNT
       operator: hash
     bics:
       columns:
         - customer_affiliate.bank_swift_code
       entity: BIC_CODE
+      operator: hash
+    bank-codes:
+      columns:
+        - customer_affiliate.bank_branch_number
+      entity: BANK_CODE
       operator: hash
     urls:
       columns:
@@ -147,6 +151,15 @@ privacy:
         - product_report.ip          # 4.0+
       entity: IP_ADDRESS
       operator: hash
+    user-agents:
+      columns:
+        - order.user_agent
+        - customer_authorize.user_agent  # 4.1+
+        - user_login.user_agent      # 4.0.1+
+        - user_authorize.user_agent  # 4.0.2+
+        - subscription.user_agent    # 4.0.2 only
+      entity: USER_AGENT
+      operator: hash
     text:
       columns:
         - order.comment
@@ -162,7 +175,7 @@ privacy:
         - subscription_history.comment  # 4.0+
         - voucher.message            # 3.0–4.0
         - order_voucher.message      # 3.0–4.0
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
@@ -172,17 +185,15 @@ privacy:
         - user.salt                  # 3.0 only
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    tokens:
       columns:
         - customer.token
         - customer.code
         - user.code                  # 3.0–4.1.0.0
-        - api.key
         - session.session_id
         - cart.session_id
         - api_session.session_id     # 3.0–4.0
         - gdpr.code                  # 4.0+
-        - customer_payment.token     # 4.0.0–4.0.1
         - customer_authorize.token   # 4.1+
         - customer_token.code        # 4.1.0.1+
         - user_login.token           # 4.0.1 only
@@ -190,7 +201,17 @@ privacy:
         - user_token.code            # 4.1.0.1+
         - voucher.code               # 3.0–4.0
         - order_voucher.code         # 3.0–4.0
+      entity: AUTH_TOKEN
+      operator: redact
+    secrets:
+      columns:
+        - api.key
       entity: API_KEY
+      operator: redact
+    payment-tokens:
+      columns:
+        - customer_payment.token     # 4.0.0–4.0.1
+      entity: PAYMENT_TOKEN
       operator: redact
     # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
     mixed-content:
@@ -206,21 +227,21 @@ privacy:
         - subscription_option.value  # 4.1+
         - cart.option
         - customer_search.keyword
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
     # Keep: mixed-content columns that hold credentials.
     mixed-content-secrets:
       columns:
         - session.data
         - setting.value
-      entity: API_KEY
+      entity: MIXED_CONTENT
       operator: redact
 ```
 
 **Choices**
 
 - `customer.code`, `user.code`, `gdpr.code`, and the `*_token.code` columns are reset, login, and GDPR confirmation codes; `customer.token` logs an admin in as the customer.
-- Voucher codes are `API_KEY`: they can be redeemed. `customer.salt` and `user.salt` (3.0) are part of the password hash.
+- `customer.salt` and `user.salt` (3.0) are part of the password hash.
 - `customer_affiliate.paypal` is the affiliate's PayPal e-mail address; `cheque` is the payee name.
 - Optional parts: delete the `mixed-content` rule if the assistant needs custom field answers, product options, or search keywords readable.
 - `mixed-content-secrets` covers `session.data` (the admin `user_token`) and `setting.value` (SMTP password, extension API keys); keep it.
@@ -234,7 +255,7 @@ privacy:
 ## Not covered
 
 - `order.payment_country`, `payment_zone`, `shipping_country`, `shipping_zone`: country and region names.
-- `user_agent` and `accept_language` columns: browser data, no matching data type.
+- `accept_language` columns: browser data, no matching data type.
 - `order.payment_method`, `shipping_method`, `transaction_id`, `tracking`, shipment references: not personal by themselves.
 - `customer_payment.name` (4.0.0–4.0.1): a saved payment method's label.
 - `upload.name`, `upload.filename`, `user.image`: file names and avatar path.

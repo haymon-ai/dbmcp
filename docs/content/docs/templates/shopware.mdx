@@ -84,7 +84,7 @@ privacy:
         - order_address.department
       entity: ORGANIZATION
       operator: hash
-    tax-ids:
+    vat-numbers:
       columns:
         - customer.vat_ids
         - order_customer.vat_ids
@@ -107,7 +107,7 @@ privacy:
     text:
       columns:
         - order.customer_comment
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
@@ -118,18 +118,22 @@ privacy:
         - integration.secret_access_key
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    tokens:
       columns:
         - customer.hash
-        - customer_recovery.hash
-        - user_recovery.hash
         - newsletter_recipient.hash
         - order.deep_link_code
         - document.deep_link_code
-        - user.store_token
-        - app.app_secret
         - sales_channel_api_context.token
         - cart.token
+        - customer_recovery.hash
+        - user_recovery.hash
+      entity: AUTH_TOKEN
+      operator: redact
+    secrets:
+      columns:
+        - user.store_token
+        - app.app_secret
         - product_export.access_key
         - import_export_file.access_token
       entity: API_KEY
@@ -159,7 +163,7 @@ privacy:
         - promotion_individual_code.payload
         - enqueue.body
         - dead_message.serialized_original_message
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
 ```
 
@@ -234,7 +238,7 @@ privacy:
         - order_address.department
       entity: ORGANIZATION
       operator: hash
-    tax-ids:
+    vat-numbers:
       columns:
         - customer.vat_ids
         - order_customer.vat_ids
@@ -256,7 +260,7 @@ privacy:
     text:
       columns:
         - order.customer_comment
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
@@ -267,18 +271,22 @@ privacy:
         - integration.secret_access_key
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    tokens:
       columns:
         - customer.hash
-        - customer_recovery.hash
-        - user_recovery.hash
         - newsletter_recipient.hash
         - order.deep_link_code
         - document.deep_link_code
-        - user.store_token
-        - app.app_secret
         - sales_channel_api_context.token
         - cart.token
+        - customer_recovery.hash
+        - user_recovery.hash
+      entity: AUTH_TOKEN
+      operator: redact
+    secrets:
+      columns:
+        - user.store_token
+        - app.app_secret
         - product_export.access_key
         - import_export_file.access_token
       entity: API_KEY
@@ -307,7 +315,7 @@ privacy:
         - sales_channel_api_context.payload
         - promotion_individual_code.payload
         - messenger_messages.body
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
 ```
 
@@ -382,7 +390,7 @@ privacy:
         - order_address.department
       entity: ORGANIZATION
       operator: hash
-    tax-ids:
+    vat-numbers:
       columns:
         - customer.vat_ids
         - order_customer.vat_ids
@@ -404,7 +412,7 @@ privacy:
     text:
       columns:
         - order.customer_comment
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
@@ -415,18 +423,22 @@ privacy:
         - integration.secret_access_key
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    tokens:
       columns:
         - customer.hash
-        - customer_recovery.hash
-        - user_recovery.hash
         - newsletter_recipient.hash
         - order.deep_link_code
         - document.deep_link_code
-        - user.store_token
-        - app.app_secret
         - sales_channel_api_context.token
         - cart.token
+        - customer_recovery.hash
+        - user_recovery.hash
+      entity: AUTH_TOKEN
+      operator: redact
+    secrets:
+      columns:
+        - user.store_token
+        - app.app_secret
         - product_export.access_key
         - import_export_file.access_token
         - deleted_apps.app_secret
@@ -457,7 +469,7 @@ privacy:
         - promotion_individual_code.payload
         - messenger_messages.body
         - order_transaction.validation_data
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
 ```
 
@@ -494,8 +506,12 @@ privacy:
         - product_review.external_user
         - import_export_log.username
         - consent_state.actor
-        - oauth_user.user_sub
       entity: PERSON
+      operator: hash
+    user-ids:
+      columns:
+        - oauth_user.user_sub
+      entity: USER_ID
       operator: hash
     phones:
       columns:
@@ -534,7 +550,7 @@ privacy:
         - order_address.department
       entity: ORGANIZATION
       operator: hash
-    tax-ids:
+    vat-numbers:
       columns:
         - customer.vat_ids
         - order_customer.vat_ids
@@ -559,7 +575,7 @@ privacy:
         - order.customer_comment
         - order.internal_comment
         - state_machine_history.internal_comment
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
@@ -570,18 +586,22 @@ privacy:
         - integration.secret_access_key
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    tokens:
       columns:
         - customer.hash
-        - customer_recovery.hash
-        - user_recovery.hash
         - newsletter_recipient.hash
         - order.deep_link_code
         - document.deep_link_code
-        - user.store_token
-        - app.app_secret
         - sales_channel_api_context.token
         - cart.token
+        - customer_recovery.hash
+        - user_recovery.hash
+      entity: AUTH_TOKEN
+      operator: redact
+    secrets:
+      columns:
+        - user.store_token
+        - app.app_secret
         - product_export.access_key
         - import_export_file.access_token
         - app.unconfirmed_app_secrets
@@ -616,7 +636,7 @@ privacy:
         - messenger_messages.body
         - order_transaction.validation_data
         - consent_log.message
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
 ```
 

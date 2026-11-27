@@ -27,13 +27,16 @@ privacy:
       operator: hash
     names:
       columns:
-        - auth.identities.provider_id
         - auth.scim_users.user_name
-        - auth.scim_users.external_id
         - auth.mfa_factors.friendly_name
         - auth.webauthn_credentials.friendly_name
-        - auth.sessions.user_agent
       entity: PERSON
+      operator: hash
+    user-ids:
+      columns:
+        - auth.identities.provider_id
+        - auth.scim_users.external_id
+      entity: USER_ID
       operator: hash
     phones:
       columns:
@@ -55,6 +58,11 @@ privacy:
         - auth.mfa_challenges.ip_address
       entity: IP_ADDRESS
       operator: hash
+    user-agents:
+      columns:
+        - auth.sessions.user_agent
+      entity: USER_AGENT
+      operator: hash
     passwords:
       columns:
         - auth.users.encrypted_password
@@ -62,7 +70,7 @@ privacy:
         - auth.oauth_clients.client_secret_hash
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    tokens:
       columns:
         - auth.users.confirmation_token
         - auth.users.recovery_token
@@ -70,18 +78,26 @@ privacy:
         - auth.users.email_change_token_current
         - auth.users.phone_change_token
         - auth.users.reauthentication_token
+        - auth.one_time_tokens.token_hash
+        - auth.one_time_tokens.link_token_hash
+        - auth.flow_state.invite_token
+      entity: AUTH_TOKEN
+      operator: redact
+    otp-secrets:
+      columns:
+        - auth.mfa_factors.secret
+        - auth.mfa_challenges.otp_code
+      entity: OTP_SECRET
+      operator: redact
+    secrets:
+      columns:
         - auth.refresh_tokens.token
         - auth.refresh_tokens.parent
         - auth.sessions.refresh_token_hmac_key
-        - auth.mfa_factors.secret
-        - auth.mfa_challenges.otp_code
-        - auth.one_time_tokens.token_hash
-        - auth.one_time_tokens.link_token_hash
         - auth.flow_state.auth_code
         - auth.flow_state.code_challenge
         - auth.flow_state.provider_access_token
         - auth.flow_state.provider_refresh_token
-        - auth.flow_state.invite_token
         - auth.oauth_authorizations.authorization_code
         - auth.oauth_authorizations.code_challenge
         - auth.oauth_client_states.code_verifier
@@ -101,7 +117,7 @@ privacy:
         - auth.mfa_factors.last_webauthn_challenge_data
         - auth.mfa_challenges.web_authn_session_data
         - auth.webauthn_challenges.session_data
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
 ```
 
@@ -109,8 +125,8 @@ privacy:
 
 - Set `database.name` to the database holding `auth` (`postgres` on Supabase projects). For another schema (`GOTRUE_DB_NAMESPACE`), replace `auth.` in every key.
 - The `users` token columns and `one_time_tokens.token_hash` hold the hashed token e-mail and SMS links carry, a bearer credential. `one_time_tokens.relates_to` holds a lowercased e-mail or phone, ruled as `EMAIL_ADDRESS`.
-- `sessions.user_agent` and the `friendly_name` columns are hashed as `PERSON` ([#425](https://github.com/haymon-ai/dbmcp/issues/425)); `sso_domains.domain` names customer organizations, not people.
-- Optional parts: delete the commented SSO domain column if unneeded and the `mixed-content` rules if the assistant needs metadata and WebAuthn columns readable.
+- `sso_domains.domain` names customer organizations, not people.
+- Optional parts: delete the commented SSO domain column if unneeded and the `mixed-content` rule if the assistant needs metadata and WebAuthn columns readable.
 
 ## Trade-offs
 

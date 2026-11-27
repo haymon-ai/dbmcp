@@ -32,9 +32,14 @@ privacy:
         - users.firstname
         - users.lastname
         - users.nickname
-        - users.authdata
         - outgoingoauthconnections.credentialsusername
       entity: PERSON
+      operator: hash
+    user-ids:
+      columns:
+        - users.authdata
+        - sessions.deviceid
+      entity: USER_ID
       operator: hash
     ip-addresses:
       columns:
@@ -51,32 +56,43 @@ privacy:
         - scheduledposts.message
         - scheduledposts.props
         - fileinfo.content
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
         - users.password
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    plaintext-passwords:
       columns:
-        - users.mfasecret
+        - outgoingoauthconnections.credentialspassword
+      entity: PASSWORD
+      operator: redact
+    tokens:
+      columns:
         - sessions.token
-        - sessions.deviceid
-        - useraccesstokens.token
         - tokens.token
         - desktoptokens.token
+        - teams.inviteid
+      entity: AUTH_TOKEN
+      operator: redact
+    otp-secrets:
+      columns:
+        - users.mfasecret
+      entity: OTP_SECRET
+      operator: redact
+    secrets:
+      columns:
+        - useraccesstokens.token
         - oauthaccessdata.token
         - oauthaccessdata.refreshtoken
         - oauthauthdata.code
         - oauthapps.clientsecret
         - outgoingoauthconnections.clientsecret
-        - outgoingoauthconnections.credentialspassword
         - remoteclusters.token
         - remoteclusters.remotetoken
         - commands.token
         - outgoingwebhooks.token
-        - teams.inviteid
       entity: API_KEY
       operator: redact
     # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
@@ -89,7 +105,7 @@ privacy:
         - tokens.extra
         - audits.extrainfo
         - pluginkeyvaluestore.pvalue
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
 ```
 
@@ -112,9 +128,14 @@ privacy:
         - users.firstname
         - users.lastname
         - users.nickname
-        - users.authdata
         - outgoingoauthconnections.credentialsusername
       entity: PERSON
+      operator: hash
+    user-ids:
+      columns:
+        - users.authdata
+        - sessions.deviceid
+      entity: USER_ID
       operator: hash
     ip-addresses:
       columns:
@@ -131,32 +152,43 @@ privacy:
         - scheduledposts.message
         - scheduledposts.props
         - fileinfo.content
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
         - users.password
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    plaintext-passwords:
       columns:
-        - users.mfasecret
+        - outgoingoauthconnections.credentialspassword
+      entity: PASSWORD
+      operator: redact
+    tokens:
+      columns:
         - sessions.token
-        - sessions.deviceid
-        - useraccesstokens.token
         - tokens.token
         - desktoptokens.token
+        - teams.inviteid
+      entity: AUTH_TOKEN
+      operator: redact
+    otp-secrets:
+      columns:
+        - users.mfasecret
+      entity: OTP_SECRET
+      operator: redact
+    secrets:
+      columns:
+        - useraccesstokens.token
         - oauthaccessdata.token
         - oauthaccessdata.refreshtoken
         - oauthauthdata.code
         - oauthapps.clientsecret
         - outgoingoauthconnections.clientsecret
-        - outgoingoauthconnections.credentialspassword
         - remoteclusters.token
         - remoteclusters.remotetoken
         - commands.token
         - outgoingwebhooks.token
-        - teams.inviteid
       entity: API_KEY
       operator: redact
     # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
@@ -169,7 +201,7 @@ privacy:
         - tokens.extra
         - audits.extrainfo
         - pluginkeyvaluestore.pvalue
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
 ```
 
@@ -192,9 +224,14 @@ privacy:
         - users.firstname
         - users.lastname
         - users.nickname
-        - users.authdata
         - outgoingoauthconnections.credentialsusername
       entity: PERSON
+      operator: hash
+    user-ids:
+      columns:
+        - users.authdata
+        - sessions.deviceid
+      entity: USER_ID
       operator: hash
     ip-addresses:
       columns:
@@ -213,32 +250,43 @@ privacy:
         - fileinfo.content
         - temporaryposts.message
         - translations.text
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
         - users.password
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    plaintext-passwords:
       columns:
-        - users.mfasecret
+        - outgoingoauthconnections.credentialspassword
+      entity: PASSWORD
+      operator: redact
+    tokens:
+      columns:
         - sessions.token
-        - sessions.deviceid
-        - useraccesstokens.token
         - tokens.token
         - desktoptokens.token
+        - teams.inviteid
+      entity: AUTH_TOKEN
+      operator: redact
+    otp-secrets:
+      columns:
+        - users.mfasecret
+      entity: OTP_SECRET
+      operator: redact
+    secrets:
+      columns:
+        - useraccesstokens.token
         - oauthaccessdata.token
         - oauthaccessdata.refreshtoken
         - oauthauthdata.code
         - oauthapps.clientsecret
         - outgoingoauthconnections.clientsecret
-        - outgoingoauthconnections.credentialspassword
         - remoteclusters.token
         - remoteclusters.remotetoken
         - commands.token
         - outgoingwebhooks.token
-        - teams.inviteid
       entity: API_KEY
       operator: redact
     # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
@@ -251,7 +299,7 @@ privacy:
         - tokens.extra
         - audits.extrainfo
         - pluginkeyvaluestore.pvalue
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
 ```
 
@@ -274,9 +322,14 @@ privacy:
         - users.firstname
         - users.lastname
         - users.nickname
-        - users.authdata
         - outgoingoauthconnections.credentialsusername
       entity: PERSON
+      operator: hash
+    user-ids:
+      columns:
+        - users.authdata
+        - sessions.deviceid
+      entity: USER_ID
       operator: hash
     ip-addresses:
       columns:
@@ -296,32 +349,43 @@ privacy:
         - temporaryposts.message
         - translations.text
         - channeljoinrequests.message
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
         - users.password
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    plaintext-passwords:
       columns:
-        - users.mfasecret
+        - outgoingoauthconnections.credentialspassword
+      entity: PASSWORD
+      operator: redact
+    tokens:
+      columns:
         - sessions.token
-        - sessions.deviceid
-        - useraccesstokens.token
         - tokens.token
         - desktoptokens.token
+        - teams.inviteid
+      entity: AUTH_TOKEN
+      operator: redact
+    otp-secrets:
+      columns:
+        - users.mfasecret
+      entity: OTP_SECRET
+      operator: redact
+    secrets:
+      columns:
+        - useraccesstokens.token
         - oauthaccessdata.token
         - oauthaccessdata.refreshtoken
         - oauthauthdata.code
         - oauthapps.clientsecret
         - outgoingoauthconnections.clientsecret
-        - outgoingoauthconnections.credentialspassword
         - remoteclusters.token
         - remoteclusters.remotetoken
         - commands.token
         - outgoingwebhooks.token
-        - teams.inviteid
       entity: API_KEY
       operator: redact
     # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
@@ -334,7 +398,7 @@ privacy:
         - tokens.extra
         - audits.extrainfo
         - pluginkeyvaluestore.pvalue
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
 ```
 
@@ -357,9 +421,15 @@ privacy:
         - users.firstname
         - users.lastname
         - users.nickname
-        - users.authdata
         - outgoingoauthconnections.credentialsusername
       entity: PERSON
+      operator: hash
+    user-ids:
+      columns:
+        - users.authdata
+        - sessions.deviceid
+        - sessions.voipdeviceid
+      entity: USER_ID
       operator: hash
     ip-addresses:
       columns:
@@ -379,33 +449,43 @@ privacy:
         - temporaryposts.message
         - translations.text
         - channeljoinrequests.message
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
         - users.password
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    plaintext-passwords:
       columns:
-        - users.mfasecret
+        - outgoingoauthconnections.credentialspassword
+      entity: PASSWORD
+      operator: redact
+    tokens:
+      columns:
         - sessions.token
-        - sessions.deviceid
-        - useraccesstokens.token
         - tokens.token
         - desktoptokens.token
+        - teams.inviteid
+      entity: AUTH_TOKEN
+      operator: redact
+    otp-secrets:
+      columns:
+        - users.mfasecret
+      entity: OTP_SECRET
+      operator: redact
+    secrets:
+      columns:
+        - useraccesstokens.token
         - oauthaccessdata.token
         - oauthaccessdata.refreshtoken
         - oauthauthdata.code
         - oauthapps.clientsecret
         - outgoingoauthconnections.clientsecret
-        - outgoingoauthconnections.credentialspassword
         - remoteclusters.token
         - remoteclusters.remotetoken
         - commands.token
         - outgoingwebhooks.token
-        - teams.inviteid
-        - sessions.voipdeviceid
       entity: API_KEY
       operator: redact
     # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
@@ -418,7 +498,7 @@ privacy:
         - tokens.extra
         - audits.extrainfo
         - pluginkeyvaluestore.pvalue
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
 ```
 
@@ -427,8 +507,8 @@ privacy:
 
 **Choices**
 
-- `users.authdata` is the user's id at the SSO provider, often the e-mail address under SAML: hashed as `PERSON`.
-- `teams.inviteid` makes up the team invite link; `sessions.deviceid` (and `voipdeviceid`, 11.9+) holds mobile push tokens.
+- `users.authdata` is the user's id at the SSO provider, often the e-mail address under SAML.
+- `teams.inviteid` makes up the team invite link; `sessions.deviceid` (and `voipdeviceid`, 11.9+) holds the mobile push device id.
 - `pluginkeyvaluestore.pvalue` can hold per-user plugin credentials; dropping `mixed-content` exposes them.
 - Optional parts: delete the commented message-content columns if the assistant should read posts, and the `mixed-content` rule if it needs those columns readable.
 

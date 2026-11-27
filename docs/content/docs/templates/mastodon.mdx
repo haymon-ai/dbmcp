@@ -31,7 +31,6 @@ privacy:
       operator: hash
     names:
       columns:
-        - identities.uid
         - webauthn_credentials.nickname
         # Public profiles (optional: published to every federated server)
         - accounts.username
@@ -40,6 +39,11 @@ privacy:
         - account_migrations.acct
         - relationship_severance_events.target_name
       entity: PERSON
+      operator: hash
+    user-ids:
+      columns:
+        - identities.uid
+      entity: USER_ID
       operator: hash
     ip-addresses:
       columns:
@@ -50,6 +54,12 @@ privacy:
         - ip_blocks.ip
         - fasp_debug_callbacks.ip
       entity: IP_ADDRESS
+      operator: hash
+    user-agents:
+      columns:
+        - login_activities.user_agent
+        - session_activations.user_agent
+      entity: USER_AGENT
       operator: hash
     text:
       columns:
@@ -73,7 +83,7 @@ privacy:
         - status_edits.poll_options
         - media_attachments.description
         - polls.options
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
@@ -81,26 +91,38 @@ privacy:
         - users.otp_backup_codes
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    tokens:
       columns:
-        - users.otp_secret
         - users.reset_password_token
         - users.confirmation_token
-        - users.sign_in_token
         - email_subscriptions.confirmation_token
         - session_activations.session_id
+        - invites.code
+        - generated_annual_reports.share_key
+      entity: AUTH_TOKEN
+      operator: redact
+    otp-secrets:
+      columns:
+        - users.otp_secret
+        - users.sign_in_token
+      entity: OTP_SECRET
+      operator: redact
+    secrets:
+      columns:
         - oauth_access_tokens.token
         - oauth_access_tokens.refresh_token
         - oauth_access_grants.token
         - oauth_access_grants.code_challenge
         - oauth_applications.secret
-        - web_push_subscriptions.endpoint
         - web_push_subscriptions.key_auth
         - web_push_subscriptions.key_p256dh
         - webhooks.secret
-        - invites.code
-        - generated_annual_reports.share_key
       entity: API_KEY
+      operator: redact
+    push-endpoints:
+      columns:
+        - web_push_subscriptions.endpoint
+      entity: URL
       operator: redact
     private-keys:
       columns:
@@ -120,7 +142,7 @@ privacy:
         - generated_annual_reports.data
         - fasp_debug_callbacks.request_body
         - settings.value
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
 ```
 
@@ -128,9 +150,9 @@ privacy:
 
 - `identities.uid` is the user's id at the SSO provider: a username or e-mail address.
 - `canonical_email_blocks.canonical_email_hash` is a guessable SHA-256 of an address; its token never equals the address's token.
-- `users.otp_backup_codes` holds backup-code digests (`passwords`); `users.otp_secret` is the TOTP seed (`secrets`).
+- `users.otp_backup_codes` holds backup-code digests, so it sits in `passwords`.
 - `web_push_subscriptions.endpoint` is redacted: with `key_auth` it lets anyone push to the user's browser.
-- Optional parts: delete the commented profile and post columns you do not need and the `mixed-content` rules if the assistant needs those columns readable.
+- Optional parts: delete the commented profile and post columns you do not need and the `mixed-content` rule if the assistant needs those columns readable.
 
 ## Trade-offs
 
@@ -142,7 +164,6 @@ privacy:
 ## Not covered
 
 - `accounts.note`, `avatar_description`, `header_description`, account URLs (which contain the username): public federated data.
-- `login_activities.user_agent`, `session_activations.user_agent`: browser data, no matching data type.
 - `custom_filter_keywords.keyword`, `custom_filters.phrase`, `lists.title`, `collections`: user-chosen labels.
 - `email_domain_blocks.domain`, `username_blocks.username`, `domain_blocks.public_comment`: server policy.
 - Media files, backups, Elasticsearch or OpenSearch, Redis: outside PostgreSQL.

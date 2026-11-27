@@ -52,8 +52,6 @@ privacy:
         - mail_activity.res_name
         - mail_message.record_name
         - res_partner_bank.acc_holder_name
-        # auth_oauth (optional)
-        - res_users.oauth_uid
         # crm (optional)
         - crm_lead.contact_name
         # hr (optional)
@@ -68,6 +66,12 @@ privacy:
         # calendar (optional)
         - calendar_attendee.common_name
       entity: PERSON
+      operator: hash
+    user-ids:
+      columns:
+        # auth_oauth (optional)
+        - res_users.oauth_uid
+      entity: USER_ID
       operator: hash
     phones:
       columns:
@@ -129,7 +133,7 @@ privacy:
         - crm_lead.partner_name
       entity: ORGANIZATION
       operator: hash
-    tax-ids:
+    vat-numbers:
       columns:
         - res_partner.vat
       entity: VAT_NUMBER
@@ -137,13 +141,13 @@ privacy:
     registry-numbers:
       columns:
         - res_partner.company_registry
-      entity: COMMERCIAL_REGISTER_DE
+      entity: COMMERCIAL_REGISTER
       operator: hash
     bank-accounts:
       columns:
         - res_partner_bank.acc_number
         - res_partner_bank.sanitized_acc_number
-      entity: IBAN_CODE
+      entity: BANK_ACCOUNT
       operator: hash
     cards:
       columns:
@@ -162,33 +166,33 @@ privacy:
       columns:
         # hr (optional)
         - hr_employee.ssnid
-      entity: US_SSN
-      operator: replace
-    social-insurance-numbers:
-      columns:
-        # hr (optional)
         - hr_employee.sinid
-      entity: SIN_CA
+      entity: SOCIAL_SECURITY
       operator: replace
     id-cards:
       columns:
         # hr (optional)
         - hr_employee.identification_id
-      entity: ID_CARD_DE
+      entity: NATIONAL_ID
       operator: replace
     passports:
       columns:
         # hr (optional)
+        - hr_employee.passport_id
+      entity: PASSPORT
+      operator: replace
+    residence-permits:
+      columns:
+        # hr (optional)
         - hr_employee.permit_no
         - hr_employee.visa_no
-        - hr_employee.passport_id
-      entity: PASSPORT_US
+      entity: RESIDENCE_PERMIT
       operator: replace
     license-plates:
       columns:
         # hr (optional)
         - hr_employee.private_car_plate
-      entity: LICENSE_PLATE_DE
+      entity: LICENSE_PLATE
       operator: replace
     text:
       columns:
@@ -206,39 +210,61 @@ privacy:
         - hr_employee.additional_note
         - hr_employee.notes
         - hr_employee.departure_description
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
         - res_users.password
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    plaintext-passwords:
       columns:
-        - res_users.totp_secret
-        - res_users_apikeys.key
-        - res_users_apikeys.index
+        - ir_mail_server.smtp_pass
+        - fetchmail_server.password
+        # hr (optional)
+        - hr_employee.pin
+      entity: PASSWORD
+      operator: redact
+    tokens:
+      columns:
         - auth_totp_device.key
         - auth_totp_device.index
         - mail_guest.access_token
         - ir_attachment.access_token
-        - ir_mail_server.smtp_pass
-        - fetchmail_server.password
         - res_partner.signup_token
-        - mail_partner_device.endpoint
+        # sale, account, payment (optional)
+        - sale_order.access_token
+        - account_move.access_token
+        # calendar (optional)
+        - calendar_attendee.access_token
+      entity: AUTH_TOKEN
+      operator: redact
+    otp-secrets:
+      columns:
+        - res_users.totp_secret
+      entity: OTP_SECRET
+      operator: redact
+    secrets:
+      columns:
+        - res_users_apikeys.key
+        - res_users_apikeys.index
         - mail_partner_device.keys
         # auth_oauth (optional)
         - res_users.oauth_access_token
         # hr (optional)
         - hr_employee.barcode
-        - hr_employee.pin
-        # sale, account, payment (optional)
-        - sale_order.access_token
-        - account_move.access_token
-        - payment_token.provider_ref
-        # calendar (optional)
-        - calendar_attendee.access_token
       entity: API_KEY
+      operator: redact
+    payment-tokens:
+      columns:
+        # sale, account, payment (optional)
+        - payment_token.provider_ref
+      entity: PAYMENT_TOKEN
+      operator: redact
+    push-endpoints:
+      columns:
+        - mail_partner_device.endpoint
+      entity: URL
       operator: redact
     private-keys:
       columns:
@@ -256,14 +282,14 @@ privacy:
         - mail_mail.failure_reason
         - mail_notification.failure_reason
         - ir_attachment.index_content
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
     # Keep: mixed-content columns that hold credentials.
     mixed-content-secrets:
       columns:
         - ir_config_parameter.value
         - ir_attachment.db_datas
-      entity: API_KEY
+      entity: MIXED_CONTENT
       operator: redact
 ```
 
@@ -306,8 +332,6 @@ privacy:
         - mail_activity.res_name
         - mail_message.record_name
         - res_partner_bank.acc_holder_name
-        # auth_oauth (optional)
-        - res_users.oauth_uid
         # crm (optional)
         - crm_lead.contact_name
         # hr (optional)
@@ -322,6 +346,12 @@ privacy:
         # calendar (optional)
         - calendar_attendee.common_name
       entity: PERSON
+      operator: hash
+    user-ids:
+      columns:
+        # auth_oauth (optional)
+        - res_users.oauth_uid
+      entity: USER_ID
       operator: hash
     phones:
       columns:
@@ -384,7 +414,7 @@ privacy:
         - crm_lead.partner_name
       entity: ORGANIZATION
       operator: hash
-    tax-ids:
+    vat-numbers:
       columns:
         - res_partner.vat
       entity: VAT_NUMBER
@@ -392,13 +422,13 @@ privacy:
     registry-numbers:
       columns:
         - res_partner.company_registry
-      entity: COMMERCIAL_REGISTER_DE
+      entity: COMMERCIAL_REGISTER
       operator: hash
     bank-accounts:
       columns:
         - res_partner_bank.acc_number
         - res_partner_bank.sanitized_acc_number
-      entity: IBAN_CODE
+      entity: BANK_ACCOUNT
       operator: hash
     cards:
       columns:
@@ -417,33 +447,33 @@ privacy:
       columns:
         # hr (optional)
         - hr_employee.ssnid
-      entity: US_SSN
-      operator: replace
-    social-insurance-numbers:
-      columns:
-        # hr (optional)
         - hr_employee.sinid
-      entity: SIN_CA
+      entity: SOCIAL_SECURITY
       operator: replace
     id-cards:
       columns:
         # hr (optional)
         - hr_employee.identification_id
-      entity: ID_CARD_DE
+      entity: NATIONAL_ID
       operator: replace
     passports:
       columns:
         # hr (optional)
+        - hr_employee.passport_id
+      entity: PASSPORT
+      operator: replace
+    residence-permits:
+      columns:
+        # hr (optional)
         - hr_employee.permit_no
         - hr_employee.visa_no
-        - hr_employee.passport_id
-      entity: PASSPORT_US
+      entity: RESIDENCE_PERMIT
       operator: replace
     license-plates:
       columns:
         # hr (optional)
         - hr_employee.private_car_plate
-      entity: LICENSE_PLATE_DE
+      entity: LICENSE_PLATE
       operator: replace
     ip-addresses:
       columns:
@@ -468,39 +498,61 @@ privacy:
         - hr_employee.additional_note
         - hr_employee.notes
         - hr_employee.departure_description
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
         - res_users.password
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    plaintext-passwords:
       columns:
-        - res_users.totp_secret
-        - res_users_apikeys.key
-        - res_users_apikeys.index
+        - ir_mail_server.smtp_pass
+        - fetchmail_server.password
+        # hr (optional)
+        - hr_employee.pin
+      entity: PASSWORD
+      operator: redact
+    tokens:
+      columns:
         - auth_totp_device.key
         - auth_totp_device.index
         - mail_guest.access_token
         - ir_attachment.access_token
-        - ir_mail_server.smtp_pass
-        - fetchmail_server.password
         - res_device_log.session_identifier
-        - mail_push_device.endpoint
+        # sale, account, payment (optional)
+        - sale_order.access_token
+        - account_move.access_token
+        # calendar (optional)
+        - calendar_attendee.access_token
+      entity: AUTH_TOKEN
+      operator: redact
+    otp-secrets:
+      columns:
+        - res_users.totp_secret
+      entity: OTP_SECRET
+      operator: redact
+    secrets:
+      columns:
+        - res_users_apikeys.key
+        - res_users_apikeys.index
         - mail_push_device.keys
         # auth_oauth (optional)
         - res_users.oauth_access_token
         # hr (optional)
         - hr_employee.barcode
-        - hr_employee.pin
-        # sale, account, payment (optional)
-        - sale_order.access_token
-        - account_move.access_token
-        - payment_token.provider_ref
-        # calendar (optional)
-        - calendar_attendee.access_token
       entity: API_KEY
+      operator: redact
+    payment-tokens:
+      columns:
+        # sale, account, payment (optional)
+        - payment_token.provider_ref
+      entity: PAYMENT_TOKEN
+      operator: redact
+    push-endpoints:
+      columns:
+        - mail_push_device.endpoint
+      entity: URL
       operator: redact
     private-keys:
       columns:
@@ -518,14 +570,14 @@ privacy:
         - mail_mail.failure_reason
         - mail_notification.failure_reason
         - ir_attachment.index_content
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
     # Keep: mixed-content columns that hold credentials.
     mixed-content-secrets:
       columns:
         - ir_config_parameter.value
         - ir_attachment.db_datas
-      entity: API_KEY
+      entity: MIXED_CONTENT
       operator: redact
 ```
 
@@ -572,8 +624,6 @@ privacy:
         - mail_guest.name
         - mail_activity.res_name
         - res_partner_bank.acc_holder_name
-        # auth_oauth (optional)
-        - res_users.oauth_uid
         # crm (optional)
         - crm_lead.contact_name
         # hr (optional)
@@ -589,6 +639,12 @@ privacy:
         # calendar (optional)
         - calendar_attendee.common_name
       entity: PERSON
+      operator: hash
+    user-ids:
+      columns:
+        # auth_oauth (optional)
+        - res_users.oauth_uid
+      entity: USER_ID
       operator: hash
     phones:
       columns:
@@ -648,7 +704,7 @@ privacy:
         - crm_lead.partner_name
       entity: ORGANIZATION
       operator: hash
-    tax-ids:
+    vat-numbers:
       columns:
         - res_partner.vat
       entity: VAT_NUMBER
@@ -656,13 +712,13 @@ privacy:
     registry-numbers:
       columns:
         - res_partner.company_registry
-      entity: COMMERCIAL_REGISTER_DE
+      entity: COMMERCIAL_REGISTER
       operator: hash
     bank-accounts:
       columns:
         - res_partner_bank.acc_number
         - res_partner_bank.sanitized_acc_number
-      entity: IBAN_CODE
+      entity: BANK_ACCOUNT
       operator: hash
     cards:
       columns:
@@ -681,27 +737,32 @@ privacy:
       columns:
         # hr (optional)
         - hr_version.ssnid
-      entity: US_SSN
+      entity: SOCIAL_SECURITY
       operator: replace
     id-cards:
       columns:
         # hr (optional)
         - hr_version.identification_id
-      entity: ID_CARD_DE
+      entity: NATIONAL_ID
       operator: replace
     passports:
       columns:
         # hr (optional)
+        - hr_version.passport_id
+      entity: PASSPORT
+      operator: replace
+    residence-permits:
+      columns:
+        # hr (optional)
         - hr_employee.permit_no
         - hr_employee.visa_no
-        - hr_version.passport_id
-      entity: PASSPORT_US
+      entity: RESIDENCE_PERMIT
       operator: replace
     license-plates:
       columns:
         # hr (optional)
         - hr_employee.private_car_plate
-      entity: LICENSE_PLATE_DE
+      entity: LICENSE_PLATE
       operator: replace
     ip-addresses:
       columns:
@@ -728,39 +789,61 @@ privacy:
         # hr (optional)
         - hr_version.additional_note
         - hr_version.departure_description
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
         - res_users.password
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    plaintext-passwords:
       columns:
-        - res_users.totp_secret
-        - res_users_apikeys.key
-        - res_users_apikeys.index
+        - ir_mail_server.smtp_pass
+        - fetchmail_server.password
+        # hr (optional)
+        - hr_employee.pin
+      entity: PASSWORD
+      operator: redact
+    tokens:
+      columns:
         - auth_totp_device.key
         - auth_totp_device.index
         - mail_guest.access_token
         - ir_attachment.access_token
-        - ir_mail_server.smtp_pass
-        - fetchmail_server.password
         - res_device_log.session_identifier
-        - mail_push_device.endpoint
+        # sale, account, payment (optional)
+        - sale_order.access_token
+        - account_move.access_token
+        # calendar (optional)
+        - calendar_attendee.access_token
+      entity: AUTH_TOKEN
+      operator: redact
+    otp-secrets:
+      columns:
+        - res_users.totp_secret
+      entity: OTP_SECRET
+      operator: redact
+    secrets:
+      columns:
+        - res_users_apikeys.key
+        - res_users_apikeys.index
         - mail_push_device.keys
         # auth_oauth (optional)
         - res_users.oauth_access_token
         # hr (optional)
         - hr_employee.barcode
-        - hr_employee.pin
-        # sale, account, payment (optional)
-        - sale_order.access_token
-        - account_move.access_token
-        - payment_token.provider_ref
-        # calendar (optional)
-        - calendar_attendee.access_token
       entity: API_KEY
+      operator: redact
+    payment-tokens:
+      columns:
+        # sale, account, payment (optional)
+        - payment_token.provider_ref
+      entity: PAYMENT_TOKEN
+      operator: redact
+    push-endpoints:
+      columns:
+        - mail_push_device.endpoint
+      entity: URL
       operator: redact
     private-keys:
       columns:
@@ -778,14 +861,14 @@ privacy:
         - mail_mail.failure_reason
         - mail_notification.failure_reason
         - ir_attachment.index_content
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
     # Keep: mixed-content columns that hold credentials.
     mixed-content-secrets:
       columns:
         - ir_config_parameter.value
         - ir_attachment.db_datas
-      entity: API_KEY
+      entity: MIXED_CONTENT
       operator: redact
 ```
 
@@ -832,8 +915,6 @@ privacy:
         - mail_guest.name
         - mail_activity.res_name
         - res_partner_bank.holder_name
-        # auth_oauth (optional)
-        - res_users.oauth_uid
         # crm (optional)
         - crm_lead.contact_name
         # hr (optional)
@@ -849,6 +930,12 @@ privacy:
         # calendar (optional)
         - calendar_attendee.common_name
       entity: PERSON
+      operator: hash
+    user-ids:
+      columns:
+        # auth_oauth (optional)
+        - res_users.oauth_uid
+      entity: USER_ID
       operator: hash
     phones:
       columns:
@@ -908,7 +995,7 @@ privacy:
         - crm_lead.partner_name
       entity: ORGANIZATION
       operator: hash
-    tax-ids:
+    vat-numbers:
       columns:
         - res_partner.vat
       entity: VAT_NUMBER
@@ -917,7 +1004,7 @@ privacy:
       columns:
         - res_partner_bank.account_number
         - res_partner_bank.sanitized_account_number
-      entity: IBAN_CODE
+      entity: BANK_ACCOUNT
       operator: hash
     cards:
       columns:
@@ -936,15 +1023,20 @@ privacy:
       columns:
         # hr (optional)
         - hr_version.identification_id
-      entity: ID_CARD_DE
+      entity: NATIONAL_ID
       operator: replace
     passports:
       columns:
         # hr (optional)
+        - hr_version.passport_id
+      entity: PASSPORT
+      operator: replace
+    residence-permits:
+      columns:
+        # hr (optional)
         - hr_employee.permit_no
         - hr_employee.visa_no
-        - hr_version.passport_id
-      entity: PASSPORT_US
+      entity: RESIDENCE_PERMIT
       operator: replace
     ip-addresses:
       columns:
@@ -971,39 +1063,61 @@ privacy:
         # hr (optional)
         - hr_employee.additional_note
         - hr_employee_departure.departure_description
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
         - res_users.password
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    plaintext-passwords:
       columns:
-        - res_users.totp_secret
-        - res_users_apikeys.key
-        - res_users_apikeys.index
+        - ir_mail_server.smtp_pass
+        - fetchmail_server.password
+        # hr (optional)
+        - hr_employee.pin
+      entity: PASSWORD
+      operator: redact
+    tokens:
+      columns:
         - auth_totp_device.key
         - auth_totp_device.index
         - mail_guest.access_token
         - ir_attachment.access_token
-        - ir_mail_server.smtp_pass
-        - fetchmail_server.password
         - res_device_log.session_identifier
-        - mail_push_device.endpoint
+        # sale, account, payment (optional)
+        - sale_order.access_token
+        - account_move.access_token
+        # calendar (optional)
+        - calendar_attendee.access_token
+      entity: AUTH_TOKEN
+      operator: redact
+    otp-secrets:
+      columns:
+        - res_users.totp_secret
+      entity: OTP_SECRET
+      operator: redact
+    secrets:
+      columns:
+        - res_users_apikeys.key
+        - res_users_apikeys.index
         - mail_push_device.keys
         # auth_oauth (optional)
         - res_users.oauth_access_token
         # hr (optional)
         - hr_employee.barcode
-        - hr_employee.pin
-        # sale, account, payment (optional)
-        - sale_order.access_token
-        - account_move.access_token
-        - payment_token.provider_ref
-        # calendar (optional)
-        - calendar_attendee.access_token
       entity: API_KEY
+      operator: redact
+    payment-tokens:
+      columns:
+        # sale, account, payment (optional)
+        - payment_token.provider_ref
+      entity: PAYMENT_TOKEN
+      operator: redact
+    push-endpoints:
+      columns:
+        - mail_push_device.endpoint
+      entity: URL
       operator: redact
     private-keys:
       columns:
@@ -1022,14 +1136,14 @@ privacy:
         - mail_notification.failure_reason
         - ir_attachment.index_content
         - res_partner.additional_identifiers
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
     # Keep: mixed-content columns that hold credentials.
     mixed-content-secrets:
       columns:
         - ir_config_parameter.value
         - ir_attachment.db_datas
-      entity: API_KEY
+      entity: MIXED_CONTENT
       operator: redact
 ```
 
@@ -1047,7 +1161,7 @@ privacy:
 ## Trade-offs
 
 - **Indexed ruled columns:** `res_partner.name`, `complete_name`, `vat`, `email_normalized`, `phone`, `phone_sanitized`; `res_users.login`; both `index` columns; `res_partner_bank.sanitized_acc_number` (`sanitized_account_number` in 20.0); `mail_blacklist.email`; `phone_blacklist.number`; push-device `endpoint`; `res_device_log.session_identifier` (18.0+); `crm_lead` contact columns; `hr_employee.barcode`; `res_users.oauth_uid`.
-- **Lookups that stop working:** contacts by name, e-mail, phone, or VAT number; users by login; bank accounts by number; sessions by IP address.
+- **Lookups that stop working:** contacts by name, e-mail, phone, or tax id; users by login; bank accounts by number; sessions by IP address.
 - **Join keys that stay unruled:** `id` and `*_id` columns, such as `res_users.partner_id` and `mail_message.res_id` (with `model`).
 
 ## Not covered

@@ -89,8 +89,13 @@ privacy:
         - admin_user.username
         - magento_login_as_customer_log.user_name
         - oauth_token_request_log.user_name
-        - paypal_settlement_report_row.consumer_id
       entity: PERSON
+      operator: hash
+    user-ids:
+      columns:
+        - quote_payment.paypal_payer_id
+        - paypal_settlement_report_row.consumer_id
+      entity: USER_ID
       operator: hash
     phones:
       columns:
@@ -143,17 +148,17 @@ privacy:
         - sales_order_address.company
       entity: ORGANIZATION
       operator: hash
-    tax-ids:
+    vat-numbers:
       columns:
-        - customer_entity.taxvat
         - customer_address_entity.vat_id
-        - customer_grid_flat.taxvat
         - customer_grid_flat.billing_vat_id
-        - quote.customer_taxvat
         - quote_address.vat_id
         - quote_address.validated_vat_number
-        - sales_order.customer_taxvat
         - sales_order_address.vat_id
+        - customer_entity.taxvat
+        - customer_grid_flat.taxvat
+        - quote.customer_taxvat
+        - sales_order.customer_taxvat
       entity: VAT_NUMBER
       operator: hash
     cards:
@@ -212,7 +217,7 @@ privacy:
         # Review text (optional)
         - review_detail.title
         - review_detail.detail
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
@@ -222,31 +227,39 @@ privacy:
         - admin_passwords.password_hash
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    tokens:
       columns:
         - customer_entity.rp_token
         - customer_entity.confirmation
         - customer_grid_flat.confirmation
         - admin_user.rp_token
         - newsletter_subscriber.subscriber_confirm_code
-        - oauth_consumer.key
-        - oauth_consumer.secret
-        - oauth_token.token
-        - oauth_token.secret
-        - oauth_token.verifier
         - login_as_customer.secret
         - persistent_session.key
         - sales_order.protect_code
         - quote_id_mask.masked_id
         - wishlist.sharing_code
         - downloadable_link_purchased_item.link_hash
-        - vault_payment_token.gateway_token
-        - paypal_billing_agreement.reference_id
+      entity: AUTH_TOKEN
+      operator: redact
+    secrets:
+      columns:
+        - oauth_consumer.key
+        - oauth_consumer.secret
+        - oauth_token.token
+        - oauth_token.secret
+        - oauth_token.verifier
         # Two-factor authentication (optional)
         - tfa_user_config.encoded_config
         # Dotdigital (optional)
         - admin_user.refresh_token
       entity: API_KEY
+      operator: redact
+    payment-tokens:
+      columns:
+        - vault_payment_token.gateway_token
+        - paypal_billing_agreement.reference_id
+      entity: PAYMENT_TOKEN
       operator: redact
     private-keys:
       columns:
@@ -279,7 +292,7 @@ privacy:
         - importexport_importdata.data
         # Dotdigital (optional)
         - email_importer.import_data
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
 ```
 
@@ -359,8 +372,13 @@ privacy:
         - admin_user.username
         - magento_login_as_customer_log.user_name
         - oauth_token_request_log.user_name
-        - paypal_settlement_report_row.consumer_id
       entity: PERSON
+      operator: hash
+    user-ids:
+      columns:
+        - quote_payment.paypal_payer_id
+        - paypal_settlement_report_row.consumer_id
+      entity: USER_ID
       operator: hash
     phones:
       columns:
@@ -413,17 +431,17 @@ privacy:
         - sales_order_address.company
       entity: ORGANIZATION
       operator: hash
-    tax-ids:
+    vat-numbers:
       columns:
-        - customer_entity.taxvat
         - customer_address_entity.vat_id
-        - customer_grid_flat.taxvat
         - customer_grid_flat.billing_vat_id
-        - quote.customer_taxvat
         - quote_address.vat_id
         - quote_address.validated_vat_number
-        - sales_order.customer_taxvat
         - sales_order_address.vat_id
+        - customer_entity.taxvat
+        - customer_grid_flat.taxvat
+        - quote.customer_taxvat
+        - sales_order.customer_taxvat
       entity: VAT_NUMBER
       operator: hash
     cards:
@@ -482,7 +500,7 @@ privacy:
         # Review text (optional)
         - review_detail.title
         - review_detail.detail
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
@@ -492,32 +510,40 @@ privacy:
         - admin_passwords.password_hash
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    tokens:
       columns:
         - customer_entity.rp_token
         - customer_entity.confirmation
         - customer_grid_flat.confirmation
         - admin_user.rp_token
         - newsletter_subscriber.subscriber_confirm_code
-        - oauth_consumer.key
-        - oauth_consumer.secret
-        - oauth_token.token
-        - oauth_token.secret
-        - oauth_token.verifier
         - login_as_customer.secret
         - persistent_session.key
         - sales_order.protect_code
         - quote_id_mask.masked_id
         - wishlist.sharing_code
         - downloadable_link_purchased_item.link_hash
-        - vault_payment_token.gateway_token
-        - paypal_billing_agreement.reference_id
         - sales_order_confirm_cancel.confirmation_key
+      entity: AUTH_TOKEN
+      operator: redact
+    secrets:
+      columns:
+        - oauth_consumer.key
+        - oauth_consumer.secret
+        - oauth_token.token
+        - oauth_token.secret
+        - oauth_token.verifier
         # Two-factor authentication (optional)
         - tfa_user_config.encoded_config
         # Dotdigital (optional)
         - admin_user.refresh_token
       entity: API_KEY
+      operator: redact
+    payment-tokens:
+      columns:
+        - vault_payment_token.gateway_token
+        - paypal_billing_agreement.reference_id
+      entity: PAYMENT_TOKEN
       operator: redact
     private-keys:
       columns:
@@ -550,7 +576,7 @@ privacy:
         - importexport_importdata.data
         # Dotdigital (optional)
         - email_importer.import_data
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
 ```
 
@@ -630,8 +656,13 @@ privacy:
         - admin_user.username
         - magento_login_as_customer_log.user_name
         - oauth_token_request_log.user_name
-        - paypal_settlement_report_row.consumer_id
       entity: PERSON
+      operator: hash
+    user-ids:
+      columns:
+        - quote_payment.paypal_payer_id
+        - paypal_settlement_report_row.consumer_id
+      entity: USER_ID
       operator: hash
     phones:
       columns:
@@ -684,17 +715,17 @@ privacy:
         - sales_order_address.company
       entity: ORGANIZATION
       operator: hash
-    tax-ids:
+    vat-numbers:
       columns:
-        - customer_entity.taxvat
         - customer_address_entity.vat_id
-        - customer_grid_flat.taxvat
         - customer_grid_flat.billing_vat_id
-        - quote.customer_taxvat
         - quote_address.vat_id
         - quote_address.validated_vat_number
-        - sales_order.customer_taxvat
         - sales_order_address.vat_id
+        - customer_entity.taxvat
+        - customer_grid_flat.taxvat
+        - quote.customer_taxvat
+        - sales_order.customer_taxvat
       entity: VAT_NUMBER
       operator: hash
     cards:
@@ -753,7 +784,7 @@ privacy:
         # Review text (optional)
         - review_detail.title
         - review_detail.detail
-      entity: PERSON
+      entity: FREE_TEXT
       operator: replace
     passwords:
       columns:
@@ -763,32 +794,40 @@ privacy:
         - admin_passwords.password_hash
       entity: PASSWORD_HASH
       operator: redact
-    secrets:
+    tokens:
       columns:
         - customer_entity.rp_token
         - customer_entity.confirmation
         - customer_grid_flat.confirmation
         - admin_user.rp_token
         - newsletter_subscriber.subscriber_confirm_code
-        - oauth_consumer.key
-        - oauth_consumer.secret
-        - oauth_token.token
-        - oauth_token.secret
-        - oauth_token.verifier
         - login_as_customer.secret
         - persistent_session.key
         - sales_order.protect_code
         - quote_id_mask.masked_id
         - wishlist.sharing_code
         - downloadable_link_purchased_item.link_hash
-        - vault_payment_token.gateway_token
-        - paypal_billing_agreement.reference_id
         - sales_order_confirm_cancel.confirmation_key
+      entity: AUTH_TOKEN
+      operator: redact
+    secrets:
+      columns:
+        - oauth_consumer.key
+        - oauth_consumer.secret
+        - oauth_token.token
+        - oauth_token.secret
+        - oauth_token.verifier
         # Two-factor authentication (optional)
         - tfa_user_config.encoded_config
         # Dotdigital (optional)
         - admin_user.refresh_token
       entity: API_KEY
+      operator: redact
+    payment-tokens:
+      columns:
+        - vault_payment_token.gateway_token
+        - paypal_billing_agreement.reference_id
+      entity: PAYMENT_TOKEN
       operator: redact
     private-keys:
       columns:
@@ -821,7 +860,7 @@ privacy:
         - importexport_importdata.data
         # Dotdigital (optional)
         - email_importer.import_data
-      entity: PERSON
+      entity: MIXED_CONTENT
       operator: replace
 ```
 
@@ -846,7 +885,7 @@ privacy:
 ## Not covered
 
 - Adobe Commerce-only modules (B2B, gift registry, RMA, store credit): schema not public.
-- Gateway and carrier references (`paypal_payer_id`, `last_trans_id`, `txn_id`, `track_number`): no fitting data type.
+- Gateway and carrier references (`last_trans_id`, `txn_id`, `track_number`): no fitting data type.
 - `cc_exp_month`, `cc_exp_year`, `cc_type`: not identifying without the card number.
 - `core_config_data.value`: store configuration the assistant needs to read; core credential fields are stored encrypted.
 - `integration.endpoint`, `oauth_consumer.callback_url`: configuration URLs.
