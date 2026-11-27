@@ -126,10 +126,15 @@ privacy:
       columns:
         # Shop operator details (optional)
         - oxshops.OXIBANNUMBER
-        - oxshops.OXBICCODE
         - oxshops.OXBANKNUMBER
         - oxshops.OXBANKCODE
       entity: IBAN_CODE
+      operator: hash
+    bics:
+      columns:
+        # Shop operator details (optional)
+        - oxshops.OXBICCODE
+      entity: BIC_CODE
       operator: hash
     birth-dates:
       columns:

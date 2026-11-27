@@ -1,6 +1,7 @@
 //! Built-in validators as a tagged enum.
 
 mod aba_routing_usa;
+mod bic_country;
 mod crypto;
 mod digits;
 mod ein_prefix_usa;
@@ -33,6 +34,8 @@ pub enum Validator {
     Noop,
     /// US ABA routing-number checksum.
     AbaRoutingUsa,
+    /// ISO 9362 BIC country code (ISO 3166 alpha-2 or `XK`).
+    BicCountry,
     /// Bitcoin `Base58Check` (P2PKH/P2SH) and Bech32/Bech32m (segwit) checksum.
     Crypto,
     /// US EIN (employer ID) prefix.
@@ -92,6 +95,7 @@ impl Validator {
         match self {
             Self::Noop => ValidationOutcome::Unknown,
             Self::AbaRoutingUsa => aba_routing_usa::validate(candidate),
+            Self::BicCountry => bic_country::validate(candidate),
             Self::Crypto => crypto::validate(candidate),
             Self::EinPrefixUsa => ein_prefix_usa::validate(candidate),
             Self::Iban => iban::validate(candidate),

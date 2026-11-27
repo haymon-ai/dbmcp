@@ -106,8 +106,12 @@ privacy:
       columns:
         - customer_affiliate.bank_account_number
         - customer_affiliate.bank_branch_number
-        - customer_affiliate.bank_swift_code
       entity: IBAN_CODE
+      operator: hash
+    bics:
+      columns:
+        - customer_affiliate.bank_swift_code
+      entity: BIC_CODE
       operator: hash
     urls:
       columns:

@@ -39,6 +39,14 @@ const KEPT: &[(&str, &str)] = &[
     // 5-digit values without a postcode keyword.
     ("reference", "75008"),
     ("order_id", "10115"),
+    // BIC shapes without a BIC keyword.
+    ("notes", "DEUTDEFF"),
+    ("reference", "DEUTDEFF500"),
+    // A bare `swift` is no BIC keyword: Swift-language columns and status words.
+    ("swift_status", "VERIFIED"),
+    ("notes", "SWIFT: REQUIRED"),
+    // BIC-shaped values are never VAT numbers.
+    ("vat_id", "DEUTDEFF500"),
 ];
 
 /// Real identifiers with a keyword in the text or the column name, and their entity.
@@ -101,6 +109,10 @@ const REDACTED: &[(&str, &str, &str)] = &[
     ("phone", "0049301234567", "PHONE_NUMBER"),
     ("notes", "+49 30 1234567", "PHONE_NUMBER"),
     ("notes", "0049 30 1234567", "PHONE_NUMBER"),
+    ("bic", "DEUTDEFF500", "BIC_CODE"),
+    ("swift_code", "COBADEFFXXX", "BIC_CODE"),
+    ("notes", "SWIFT code: BNPAFRPPXXX", "BIC_CODE"),
+    ("notes", "VAT and BIC DEUTDEFF500", "BIC_CODE"),
 ];
 
 /// Redacts one `{column: value}` row with the `replace` operator.
