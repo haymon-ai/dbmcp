@@ -22,8 +22,14 @@ export default async function Redirect(props: PageProps<'/docs/[[...slug]]'>) {
   const to = target(slug);
   if (!to) notFound();
   const href = `${basePath}${to === '/' ? '/' : `${to}/`}`;
+  // The meta refresh drops the query and the #hash; the script keeps them when JavaScript runs.
+  const forward = `location.replace(${JSON.stringify(href).replace(/</g, '\\u003c')}+location.search+location.hash)`;
   return (
     <>
+      <script
+        // biome-ignore lint/security/noDangerouslySetInnerHtml: server-built from a known page path, `<` escaped.
+        dangerouslySetInnerHTML={{ __html: forward }}
+      />
       <meta httpEquiv="refresh" content={`0; url=${href}`} />
       <link rel="canonical" href={`${siteUrl}${href}`} />
       <p className="p-6">
