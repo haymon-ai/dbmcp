@@ -2,13 +2,10 @@
 //!
 //! Walks every reachable [`Value::String`] leaf in each row through the
 //! [`Analyzer`] plus the configured [`Operator`], mutating the input slice
-//! in place. Object keys inside a value are scanned too (regex only, with
-//! the parent key path as context) and their detected spans rewritten by
-//! the same operator; colliding sibling keys take `#2`, `#3`, … suffixes,
-//! and a key `redact` would empty becomes the entity placeholder. Row-level
-//! keys (column names), non-string scalars (`Number`, `Bool`, `Null`), and
-//! the JSON shape (container ordering, array indexes) are preserved
-//! verbatim. The traversal is iterative — it uses an explicit
+//! in place. Object keys below the row level are scanned too (regex only)
+//! and renamed over their spans. Column names, non-string scalars (`Number`,
+//! `Bool`, `Null`), and the JSON shape (container ordering, array indexes)
+//! are preserved verbatim. The traversal is iterative — it uses an explicit
 //! heap-resident stack of `&mut Value` work items, so deeply nested
 //! payloads never blow the call stack.
 //!
@@ -72,19 +69,14 @@ pub struct RedactionStats {
     /// (e.g. row was a top-level number) from "scanned N, redacted 0"
     /// (no PII present).
     pub string_leaves_scanned: u64,
-    /// Number of object keys renamed because they held at least one span.
-    ///
-    /// Their spans count toward [`Self::total`] and [`Self::by_entity`].
+    /// Object keys renamed; their spans also count toward [`Self::total`].
     pub keys_rewritten: u64,
 }
 
 pub(crate) enum Frame<'a> {
-    /// Result row — its own keys are column names and are never renamed.
-    Row(&'a mut Value),
-    /// Array element — no key words to push.
+    /// Top-level row or array element — no key words to push.
     Root(&'a mut Value),
-    /// Object child — `key`, the original text before any rename, is split
-    /// into words on entry into the shared path.
+    /// Object child — its original (pre-rename) key is split into words on entry.
     KeyedChild(&'a mut Value, Cow<'a, str>),
     /// Truncates the shared path by `n` words once a subtree is done.
     Pop(usize),
@@ -245,10 +237,8 @@ impl Redactor {
     /// Mutates `rows` in place. Recurses into [`Value::Object`] values
     /// and [`Value::Array`] elements at any depth using an iterative
     /// heap stack — call-stack depth does not scale with payload depth.
-    /// Each row object's own keys (column names) are left as they are; keys
-    /// below them are scanned with the regex recognizers and renamed where a
-    /// span is found (see the module docs); non-string scalars pass through
-    /// unchanged. When an NER engine is attached, each leaf is
+    /// Column names are kept; nested object keys are renamed over regex
+    /// spans. Non-string scalars pass through unchanged. When an NER engine is attached, each leaf is
     /// also run through it and its spans merged with the regex hits. Emits
     /// one `tracing::info!` event per call when at least one span was
     /// rewritten.
@@ -260,7 +250,17 @@ impl Redactor {
     /// failed without returning any row (fail-closed).
     pub fn apply(&self, rows: &mut [Value]) -> Result<RedactionStats, RedactionError> {
         let mut stats = RedactionStats::default();
-        self.walk(rows.iter_mut().rev().map(Frame::Row).collect(), &mut stats)?;
+        let mut roots = Vec::new();
+        for row in rows.iter_mut().rev() {
+            match row {
+                Value::Object(map) => roots.extend(
+                    map.iter_mut()
+                        .map(|(name, cell)| Frame::KeyedChild(cell, name.as_str().into())),
+                ),
+                other => roots.push(Frame::Root(other)),
+            }
+        }
+        self.walk(roots, &mut stats)?;
         log_redactions(&stats, Some(rows.len()));
         Ok(stats)
     }
@@ -268,8 +268,7 @@ impl Redactor {
     /// Runs global detection over every string leaf under `roots`.
     ///
     /// `roots` is a stack: the last frame is walked first. A
-    /// [`Frame::KeyedChild`] root contributes its key as context. Keys of
-    /// every object below a root are renamed, except a [`Frame::Row`]'s own.
+    /// [`Frame::KeyedChild`] root contributes its key as context.
     ///
     /// # Errors
     ///
@@ -295,19 +294,18 @@ impl Redactor {
             let mut path: Vec<String> = Vec::new();
             let mut stack = roots;
             while let Some(frame) = stack.pop() {
-                let (v, rename) = match frame {
+                let v = match frame {
                     Frame::Pop(n) => {
                         path.truncate(path.len() - n);
                         continue;
                     }
-                    Frame::Row(v) => (v, false),
-                    Frame::Root(v) => (v, true),
+                    Frame::Root(v) => v,
                     Frame::KeyedChild(v, key) => {
                         // Pop pushed before children → runs after them (LIFO).
                         // Pop(0) is a no-op for separator-only keys.
                         let n = push_key_words(&mut path, &key);
                         stack.push(Frame::Pop(n));
-                        (v, true)
+                        v
                     }
                 };
                 match v {
@@ -326,12 +324,7 @@ impl Redactor {
                     }
                     Value::Object(map) => {
                         // Children keep the original key's words as context.
-                        let mut originals = if rename {
-                            self.rename_keys(map, analyzer, &path, &operator, stats)
-                        } else {
-                            Vec::new()
-                        }
-                        .into_iter();
+                        let mut originals = rename_keys(map, analyzer, &path, &self.opts, &operator, stats).into_iter();
                         for (key, child) in map.iter_mut() {
                             let key = originals
                                 .next()
@@ -378,51 +371,6 @@ impl Redactor {
             return Err(RedactionError::Internal(format!("NER inference failed: {e}")));
         }
         Ok(())
-    }
-
-    /// Renames every key of `map` holding a detected span, keeping map order.
-    ///
-    /// Keys are analyzed by the regex recognizers only, with `path` as
-    /// context. A renamed key that collides with a sibling in the final key
-    /// set takes the next free `#n` suffix (from `#2`), in map order. Returns
-    /// each entry's original key where renamed, by position, or nothing when
-    /// no key changed (the map is then left untouched).
-    fn rename_keys(
-        &self,
-        map: &mut Map<String, Value>,
-        analyzer: &Analyzer,
-        path: &[String],
-        operator: &Operator,
-        stats: &mut RedactionStats,
-    ) -> Vec<Option<String>> {
-        let renamed: Vec<Option<String>> = map
-            .keys()
-            .map(|key| rename_key(key, analyzer, path, &self.opts, operator, stats))
-            .collect();
-        if renamed.iter().all(Option::is_none) {
-            return Vec::new();
-        }
-        let mut taken: HashSet<String> = map
-            .keys()
-            .zip(&renamed)
-            .filter(|(_, new)| new.is_none())
-            .map(|(key, _)| key.clone())
-            .collect();
-        // Next suffix to try per renamed text, so `n` collisions cost O(n).
-        let mut next = HashMap::new();
-        let mut originals = Vec::with_capacity(renamed.len());
-        for ((key, value), new) in std::mem::take(map).into_iter().zip(renamed) {
-            let Some(new) = new else {
-                map.insert(key, value);
-                originals.push(None);
-                continue;
-            };
-            let unique = free_key(&taken, &mut next, new);
-            taken.insert(unique.clone());
-            map.insert(unique, value);
-            originals.push(Some(key));
-        }
-        originals
     }
 
     /// Redacts `rows`, keeping the heavier NER pass off the async runtime.
@@ -597,8 +545,8 @@ fn allowed_ner_entities(cfg: &privacy::Config) -> Vec<Entity> {
 /// NER spans below `min_score` are dropped (regex spans arrive filtered but
 /// unresolved); the rest are overlap-resolved once, together, by [`anonymize`]
 /// (see [`crate::overlap`]), so a regex span is never cut or relabeled by an
-/// NER span. No-op when no span remains.
-/// Shared by the regex-only leaf, the batched NER leaf, and free text.
+/// NER span. No-op when no span remains; else returns the first span's entity.
+/// Shared by the regex-only leaf, the batched NER leaf, free text, and keys.
 fn redact_spans(
     s: &mut String,
     mut regex: Vec<RecognizerResult>,
@@ -606,27 +554,66 @@ fn redact_spans(
     min_score: crate::Score,
     operator: &Operator,
     stats: &mut RedactionStats,
-) {
+) -> Option<Entity> {
     ner.retain(|r| r.score >= min_score);
     regex.append(&mut ner);
     if regex.is_empty() {
-        return;
+        return None;
     }
     let anon = anonymize(s, regex, operator);
-    if anon.operations.is_empty() {
-        return;
-    }
+    let first = anon.operations.first()?.entity_type;
     for op in &anon.operations {
         stats.total += 1;
         *stats.by_entity.entry(op.entity_type).or_insert(0) += 1;
     }
     *s = anon.text;
+    Some(first)
+}
+
+/// Renames every key of `map` holding a regex span, keeping map order.
+///
+/// Collisions take the next free `#n` suffix (from `#2`), in map order.
+/// Returns each renamed entry's original key by position; empty when nothing changed.
+fn rename_keys(
+    map: &mut Map<String, Value>,
+    analyzer: &Analyzer,
+    path: &[String],
+    opts: &AnalyzeOptions,
+    operator: &Operator,
+    stats: &mut RedactionStats,
+) -> Vec<Option<String>> {
+    let renamed: Vec<Option<String>> = map
+        .keys()
+        .map(|key| rename_key(key, analyzer, path, opts, operator, stats))
+        .collect();
+    if renamed.iter().all(Option::is_none) {
+        return Vec::new();
+    }
+    let mut taken: HashSet<String> = map
+        .keys()
+        .zip(&renamed)
+        .filter(|(_, new)| new.is_none())
+        .map(|(key, _)| key.clone())
+        .collect();
+    // Next suffix to try per renamed text, so `n` collisions cost O(n).
+    let mut next = HashMap::new();
+    let mut originals = Vec::with_capacity(renamed.len());
+    let old = std::mem::replace(map, Map::with_capacity(renamed.len()));
+    for ((key, value), new) in old.into_iter().zip(renamed) {
+        let Some(new) = new else {
+            map.insert(key, value);
+            originals.push(None);
+            continue;
+        };
+        map.insert(free_key(&mut taken, &mut next, new), value);
+        originals.push(Some(key));
+    }
+    originals
 }
 
 /// Returns `key` rewritten over its regex spans, or `None` when it holds none.
 ///
-/// A key the operator would empty (`redact` over the whole key) becomes the
-/// first span's entity placeholder instead.
+/// A key `redact` would empty becomes the first span's entity placeholder.
 fn rename_key(
     key: &str,
     analyzer: &Analyzer,
@@ -639,34 +626,30 @@ fn rename_key(
     if results.is_empty() {
         return None;
     }
-    let anon = anonymize(key, results, operator);
-    let first = anon.operations.first()?.entity_type;
+    let mut text = key.to_owned();
+    let first = redact_spans(&mut text, results, Vec::new(), opts.min_score, operator, stats)?;
     stats.keys_rewritten += 1;
-    for op in &anon.operations {
-        stats.total += 1;
-        *stats.by_entity.entry(op.entity_type).or_insert(0) += 1;
-    }
-    if anon.text.is_empty() {
+    if text.is_empty() {
         return Some(first.placeholder().to_owned());
     }
-    Some(anon.text)
+    Some(text)
 }
 
-/// Returns `key`, or `key#n` for the lowest free `n` from `next[key]` (or 2).
-///
-/// Suffixes below `next[key]` were handed out before, so the search resumes
-/// there and records the suffix after the one it returns.
-fn free_key(taken: &HashSet<String>, next: &mut HashMap<String, usize>, key: String) -> String {
-    if !taken.contains(&key) {
+/// Claims `key`, or `key#n` for the first free `n` from `next[key]` (default 2).
+fn free_key(taken: &mut HashSet<String>, next: &mut HashMap<String, usize>, key: String) -> String {
+    if taken.insert(key.clone()) {
         return key;
     }
-    let start = next.get(&key).copied().unwrap_or(2);
-    // `taken.len() + 1` candidates cannot all be taken.
-    let (n, candidate) = (start..=start + taken.len())
-        .map(|n| (n, format!("{key}#{n}")))
-        .find(|(_, candidate)| !taken.contains(candidate))
-        .expect("more candidates than taken keys");
+    let mut n = next.get(&key).copied().unwrap_or(2);
+    let candidate = loop {
+        let candidate = format!("{key}#{n}");
+        if !taken.contains(&candidate) {
+            break candidate;
+        }
+        n += 1;
+    };
     next.insert(key, n + 1);
+    taken.insert(candidate.clone());
     candidate
 }
 
