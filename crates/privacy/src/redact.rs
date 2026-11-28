@@ -2,9 +2,12 @@
 //!
 //! Walks every reachable [`Value::String`] leaf in each row through the
 //! [`Analyzer`] plus the configured [`Operator`], mutating the input slice
-//! in place. Object
-//! keys, non-string scalars (`Number`, `Bool`, `Null`), and the JSON
-//! shape (container ordering, key names, array indexes) are preserved
+//! in place. Object keys inside a value are scanned too (regex only, with
+//! the parent key path as context) and their detected spans rewritten by
+//! the same operator; colliding sibling keys take `#2`, `#3`, … suffixes,
+//! and a key `redact` would empty becomes the entity placeholder. Row-level
+//! keys (column names), non-string scalars (`Number`, `Bool`, `Null`), and
+//! the JSON shape (container ordering, array indexes) are preserved
 //! verbatim. The traversal is iterative — it uses an explicit
 //! heap-resident stack of `&mut Value` work items, so deeply nested
 //! payloads never blow the call stack.
@@ -16,13 +19,14 @@
 //! `dbmcp::pii` is emitted per [`Redactor::apply`] call when at least
 //! one span was rewritten.
 
-use std::collections::BTreeMap;
+use std::borrow::Cow;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
 use dbmcp_types::privacy;
 use secrecy::ExposeSecret;
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::Entity;
 use crate::result::RecognizerResult;
@@ -68,13 +72,20 @@ pub struct RedactionStats {
     /// (e.g. row was a top-level number) from "scanned N, redacted 0"
     /// (no PII present).
     pub string_leaves_scanned: u64,
+    /// Number of object keys renamed because they held at least one span.
+    ///
+    /// Their spans count toward [`Self::total`] and [`Self::by_entity`].
+    pub keys_rewritten: u64,
 }
 
 pub(crate) enum Frame<'a> {
-    /// Top-level row or array element — no key words to push.
+    /// Result row — its own keys are column names and are never renamed.
+    Row(&'a mut Value),
+    /// Array element — no key words to push.
     Root(&'a mut Value),
-    /// Object child — `key` is split into words on entry into the shared path.
-    KeyedChild(&'a mut Value, &'a str),
+    /// Object child — `key`, the original text before any rename, is split
+    /// into words on entry into the shared path.
+    KeyedChild(&'a mut Value, Cow<'a, str>),
     /// Truncates the shared path by `n` words once a subtree is done.
     Pop(usize),
 }
@@ -234,8 +245,10 @@ impl Redactor {
     /// Mutates `rows` in place. Recurses into [`Value::Object`] values
     /// and [`Value::Array`] elements at any depth using an iterative
     /// heap stack — call-stack depth does not scale with payload depth.
-    /// Object keys are never inspected or modified; non-string scalars
-    /// pass through unchanged. When an NER engine is attached, each leaf is
+    /// Each row object's own keys (column names) are left as they are; keys
+    /// below them are scanned with the regex recognizers and renamed where a
+    /// span is found (see the module docs); non-string scalars pass through
+    /// unchanged. When an NER engine is attached, each leaf is
     /// also run through it and its spans merged with the regex hits. Emits
     /// one `tracing::info!` event per call when at least one span was
     /// rewritten.
@@ -247,7 +260,7 @@ impl Redactor {
     /// failed without returning any row (fail-closed).
     pub fn apply(&self, rows: &mut [Value]) -> Result<RedactionStats, RedactionError> {
         let mut stats = RedactionStats::default();
-        self.walk(rows.iter_mut().rev().map(Frame::Root).collect(), &mut stats)?;
+        self.walk(rows.iter_mut().rev().map(Frame::Row).collect(), &mut stats)?;
         log_redactions(&stats, Some(rows.len()));
         Ok(stats)
     }
@@ -255,7 +268,8 @@ impl Redactor {
     /// Runs global detection over every string leaf under `roots`.
     ///
     /// `roots` is a stack: the last frame is walked first. A
-    /// [`Frame::KeyedChild`] root contributes its key as context.
+    /// [`Frame::KeyedChild`] root contributes its key as context. Keys of
+    /// every object below a root are renamed, except a [`Frame::Row`]'s own.
     ///
     /// # Errors
     ///
@@ -281,18 +295,19 @@ impl Redactor {
             let mut path: Vec<String> = Vec::new();
             let mut stack = roots;
             while let Some(frame) = stack.pop() {
-                let v = match frame {
+                let (v, rename) = match frame {
                     Frame::Pop(n) => {
                         path.truncate(path.len() - n);
                         continue;
                     }
-                    Frame::Root(v) => v,
+                    Frame::Row(v) => (v, false),
+                    Frame::Root(v) => (v, true),
                     Frame::KeyedChild(v, key) => {
                         // Pop pushed before children → runs after them (LIFO).
                         // Pop(0) is a no-op for separator-only keys.
-                        let n = push_key_words(&mut path, key);
+                        let n = push_key_words(&mut path, &key);
                         stack.push(Frame::Pop(n));
-                        v
+                        (v, true)
                     }
                 };
                 match v {
@@ -310,7 +325,18 @@ impl Redactor {
                         }
                     }
                     Value::Object(map) => {
+                        // Children keep the original key's words as context.
+                        let mut originals = if rename {
+                            self.rename_keys(map, analyzer, &path, &operator, stats)
+                        } else {
+                            Vec::new()
+                        }
+                        .into_iter();
                         for (key, child) in map.iter_mut() {
+                            let key = originals
+                                .next()
+                                .flatten()
+                                .map_or(Cow::Borrowed(key.as_str()), Cow::Owned);
                             stack.push(Frame::KeyedChild(child, key));
                         }
                     }
@@ -352,6 +378,51 @@ impl Redactor {
             return Err(RedactionError::Internal(format!("NER inference failed: {e}")));
         }
         Ok(())
+    }
+
+    /// Renames every key of `map` holding a detected span, keeping map order.
+    ///
+    /// Keys are analyzed by the regex recognizers only, with `path` as
+    /// context. A renamed key that collides with a sibling in the final key
+    /// set takes the next free `#n` suffix (from `#2`), in map order. Returns
+    /// each entry's original key where renamed, by position, or nothing when
+    /// no key changed (the map is then left untouched).
+    fn rename_keys(
+        &self,
+        map: &mut Map<String, Value>,
+        analyzer: &Analyzer,
+        path: &[String],
+        operator: &Operator,
+        stats: &mut RedactionStats,
+    ) -> Vec<Option<String>> {
+        let renamed: Vec<Option<String>> = map
+            .keys()
+            .map(|key| rename_key(key, analyzer, path, &self.opts, operator, stats))
+            .collect();
+        if renamed.iter().all(Option::is_none) {
+            return Vec::new();
+        }
+        let mut taken: HashSet<String> = map
+            .keys()
+            .zip(&renamed)
+            .filter(|(_, new)| new.is_none())
+            .map(|(key, _)| key.clone())
+            .collect();
+        // Next suffix to try per renamed text, so `n` collisions cost O(n).
+        let mut next = HashMap::new();
+        let mut originals = Vec::with_capacity(renamed.len());
+        for ((key, value), new) in std::mem::take(map).into_iter().zip(renamed) {
+            let Some(new) = new else {
+                map.insert(key, value);
+                originals.push(None);
+                continue;
+            };
+            let unique = free_key(&taken, &mut next, new);
+            taken.insert(unique.clone());
+            map.insert(unique, value);
+            originals.push(Some(key));
+        }
+        originals
     }
 
     /// Redacts `rows`, keeping the heavier NER pass off the async runtime.
@@ -465,6 +536,7 @@ pub(crate) fn log_redactions(stats: &RedactionStats, row_count: Option<usize>) {
             by_entity = ?stats.by_entity,
             rows,
             string_leaves_scanned = stats.string_leaves_scanned,
+            keys_rewritten = stats.keys_rewritten,
             "pii.redacted"
         );
     } else {
@@ -549,6 +621,53 @@ fn redact_spans(
         *stats.by_entity.entry(op.entity_type).or_insert(0) += 1;
     }
     *s = anon.text;
+}
+
+/// Returns `key` rewritten over its regex spans, or `None` when it holds none.
+///
+/// A key the operator would empty (`redact` over the whole key) becomes the
+/// first span's entity placeholder instead.
+fn rename_key(
+    key: &str,
+    analyzer: &Analyzer,
+    path: &[String],
+    opts: &AnalyzeOptions,
+    operator: &Operator,
+    stats: &mut RedactionStats,
+) -> Option<String> {
+    let results = analyzer.analyze_with_context(key, path, opts);
+    if results.is_empty() {
+        return None;
+    }
+    let anon = anonymize(key, results, operator);
+    let first = anon.operations.first()?.entity_type;
+    stats.keys_rewritten += 1;
+    for op in &anon.operations {
+        stats.total += 1;
+        *stats.by_entity.entry(op.entity_type).or_insert(0) += 1;
+    }
+    if anon.text.is_empty() {
+        return Some(first.placeholder().to_owned());
+    }
+    Some(anon.text)
+}
+
+/// Returns `key`, or `key#n` for the lowest free `n` from `next[key]` (or 2).
+///
+/// Suffixes below `next[key]` were handed out before, so the search resumes
+/// there and records the suffix after the one it returns.
+fn free_key(taken: &HashSet<String>, next: &mut HashMap<String, usize>, key: String) -> String {
+    if !taken.contains(&key) {
+        return key;
+    }
+    let start = next.get(&key).copied().unwrap_or(2);
+    // `taken.len() + 1` candidates cannot all be taken.
+    let (n, candidate) = (start..=start + taken.len())
+        .map(|n| (n, format!("{key}#{n}")))
+        .find(|(_, candidate)| !taken.contains(candidate))
+        .expect("more candidates than taken keys");
+    next.insert(key, n + 1);
+    candidate
 }
 
 /// Draws the random per-process `hash` key used when `privacy.key` is unset.
@@ -780,22 +899,194 @@ mod tests {
     }
 
     #[test]
-    fn preserves_pii_shaped_keys() {
+    fn renames_pii_shaped_keys_inside_a_value() {
         let r = Redactor::with_defaults();
-        let mut rows = vec![json!({"jane.doe@example.com": 1})];
+        let mut rows = vec![json!({"doc": {"jane.doe@example.com": 1}})];
         let stats = r.apply(&mut rows).expect("apply ok");
-        assert_eq!(rows[0], json!({"jane.doe@example.com": 1}));
-        assert_eq!(stats.total, 0);
+        assert_eq!(rows[0], json!({"doc": {"<EMAIL_ADDRESS>": 1}}));
+        assert_eq!(stats.total, 1);
+        assert_eq!(stats.keys_rewritten, 1);
+        assert_eq!(stats.by_entity.get(&Entity::EmailAddress).copied(), Some(1));
     }
 
     #[test]
-    fn same_pii_string_as_key_and_value_only_value_redacted() {
+    fn same_pii_string_as_key_and_value_both_redacted() {
         let r = Redactor::with_defaults();
-        let mut rows = vec![json!({"a@b.com": "a@b.com"})];
+        let mut rows = vec![json!({"doc": {"a@b.com": "a@b.com"}})];
         let stats = r.apply(&mut rows).expect("apply ok");
-        assert_eq!(rows[0], json!({"a@b.com": "<EMAIL_ADDRESS>"}));
-        assert_eq!(stats.total, 1);
+        assert_eq!(rows[0], json!({"doc": {"<EMAIL_ADDRESS>": "<EMAIL_ADDRESS>"}}));
+        assert_eq!(stats.total, 2);
+        assert_eq!(stats.keys_rewritten, 1);
         assert_eq!(stats.string_leaves_scanned, 1);
+    }
+
+    /// A default-analyzer redactor under global `operator` and the test key.
+    fn under(operator: privacy::Operator) -> Redactor {
+        Redactor::new(Some(Analyzer::with_defaults()), operator, KEY.as_bytes())
+    }
+
+    /// Redacts one row holding `doc` under column `doc` and returns the cell.
+    fn redact_doc(r: &Redactor, doc: Value) -> Value {
+        let mut rows = vec![Value::Object(Map::from_iter([("doc".to_owned(), doc)]))];
+        r.apply(&mut rows).expect("apply ok");
+        rows.remove(0)["doc"].take()
+    }
+
+    /// The keys of a JSON object, in map order.
+    fn keys(value: &Value) -> Vec<String> {
+        value.as_object().expect("object").keys().cloned().collect()
+    }
+
+    #[test]
+    fn renames_a_key_under_each_operator() {
+        let doc = json!({"x@y.com": 1});
+        let cases = [
+            (privacy::Operator::Replace, "<EMAIL_ADDRESS>"),
+            (privacy::Operator::Mask, "*******"),
+            (privacy::Operator::Redact, "<EMAIL_ADDRESS>"),
+            (privacy::Operator::Hash, "<EMAIL_ADDRESS_06fff299b93c0784>"),
+        ];
+        for (operator, key) in cases {
+            assert_eq!(
+                redact_doc(&under(operator), doc.clone()),
+                json!({ key: 1 }),
+                "{operator:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_hashed_key_matches_the_same_value_hashed() {
+        let out = redact_doc(&under(privacy::Operator::Hash), json!({"x@y.com": "x@y.com"}));
+        let (key, value) = out.as_object().expect("object").iter().next().expect("one entry");
+        assert_eq!(value, key.as_str());
+        assert_eq!(key, "<EMAIL_ADDRESS_06fff299b93c0784>");
+    }
+
+    #[test]
+    fn colliding_renamed_keys_take_ordinal_suffixes() {
+        let doc = json!({"a@b.com": 1, "c@d.com": 2, "e@f.com": 3});
+        let cases = [
+            (privacy::Operator::Replace, "<EMAIL_ADDRESS>"),
+            (privacy::Operator::Mask, "*******"),
+            (privacy::Operator::Redact, "<EMAIL_ADDRESS>"),
+        ];
+        for (operator, key) in cases {
+            let out = redact_doc(&under(operator), doc.clone());
+            assert_eq!(
+                keys(&out),
+                [key.to_owned(), format!("{key}#2"), format!("{key}#3")],
+                "{operator:?}"
+            );
+            assert_eq!(out.as_object().expect("object").values().collect::<Vec<_>>(), [1, 2, 3]);
+        }
+    }
+
+    #[test]
+    fn renamed_keys_avoid_literal_siblings() {
+        let r = Redactor::with_defaults();
+        let out = redact_doc(
+            &r,
+            json!({"a@b.com": 1, "<EMAIL_ADDRESS>": 2, "<EMAIL_ADDRESS>#2": 3, "c@d.com": 4}),
+        );
+        assert_eq!(
+            out,
+            json!({"<EMAIL_ADDRESS>#3": 1, "<EMAIL_ADDRESS>": 2, "<EMAIL_ADDRESS>#2": 3, "<EMAIL_ADDRESS>#4": 4})
+        );
+        assert_eq!(
+            keys(&out),
+            [
+                "<EMAIL_ADDRESS>#3",
+                "<EMAIL_ADDRESS>",
+                "<EMAIL_ADDRESS>#2",
+                "<EMAIL_ADDRESS>#4"
+            ]
+        );
+    }
+
+    #[test]
+    fn only_the_detected_span_of_a_key_is_rewritten() {
+        let doc = json!({"user:alice@example.com": 1});
+        assert_eq!(
+            redact_doc(&under(privacy::Operator::Replace), doc.clone()),
+            json!({"user:<EMAIL_ADDRESS>": 1})
+        );
+        assert_eq!(redact_doc(&under(privacy::Operator::Redact), doc), json!({"user:": 1}));
+    }
+
+    #[test]
+    fn keys_without_spans_are_untouched() {
+        let r = Redactor::with_defaults();
+        let doc = json!({"b": {"c": 1}, "a": [{"z": 2, "y": 3}]});
+        let out = redact_doc(&r, doc.clone());
+        assert_eq!(out, doc);
+        assert_eq!(keys(&out), ["b", "a"]);
+        assert_eq!(keys(&out["a"][0]), ["z", "y"]);
+    }
+
+    #[test]
+    fn keys_inside_arrays_are_renamed() {
+        let out = redact_doc(&Redactor::with_defaults(), json!([{"a@b.com": 1}]));
+        assert_eq!(out, json!([{"<EMAIL_ADDRESS>": 1}]));
+    }
+
+    #[test]
+    fn key_renaming_is_deterministic() {
+        let r = under(privacy::Operator::Hash);
+        let doc = json!({"a@b.com": 1, "<EMAIL_ADDRESS_x>": 2, "a@b.com ": 3, "c@d.com": {"e@f.com": 4}});
+        let first = redact_doc(&r, doc.clone());
+        let second = redact_doc(&r, doc);
+        assert_eq!(
+            serde_json::to_string(&first).expect("serializes"),
+            serde_json::to_string(&second).expect("serializes")
+        );
+    }
+
+    #[test]
+    fn a_key_is_analyzed_with_its_parent_key_path() {
+        let r = Redactor::with_analyzer(weak_phone_analyzer()).with_analyze_options(AnalyzeOptions {
+            min_score: Score::from_static(0.4),
+            context: Some(ctx_settings()),
+        });
+        let mut rows = vec![json!({"phone": {"415 555 0142": 1}, "name": {"415 555 0142": 1}})];
+        let stats = r.apply(&mut rows).expect("apply ok");
+        assert_eq!(
+            rows[0],
+            json!({"phone": {"<PHONE_NUMBER>": 1}, "name": {"415 555 0142": 1}})
+        );
+        assert_eq!(stats.keys_rewritten, 1);
+    }
+
+    #[test]
+    fn children_of_a_renamed_key_keep_its_original_words_as_context() {
+        // The phone recognizer is boosted only by `secretword`, which is itself
+        // detected (as a person), so the key is renamed to `<PERSON>`.
+        let digits = Pattern::new("digits", r"\b\d{3} \d{3} \d{4}\b", Score::from_static(0.1)).expect("static");
+        let phone = Recognizer::new(Entity::PhoneNumber, vec![digits])
+            .expect("non-empty")
+            .with_name("PhoneRecognizer")
+            .with_context(&["secretword"]);
+        let word = Pattern::new("word", r"\bsecretword\b", Score::from_static(0.9)).expect("static");
+        let mut analyzer = Analyzer::empty();
+        analyzer.register(phone);
+        analyzer.register(Recognizer::new(Entity::Person, vec![word]).expect("non-empty"));
+        let r = Redactor::with_analyzer(analyzer).with_analyze_options(AnalyzeOptions {
+            min_score: Score::from_static(0.4),
+            context: Some(ctx_settings()),
+        });
+        let mut rows = vec![json!({"doc": {"secretword": {"x": "415 555 0142"}}})];
+        r.apply(&mut rows).expect("apply ok");
+        assert_eq!(rows[0], json!({"doc": {"<PERSON>": {"x": "<PHONE_NUMBER>"}}}));
+    }
+
+    #[test]
+    fn row_level_keys_are_never_renamed() {
+        let r = Redactor::with_defaults();
+        let mut rows = vec![json!({"jane.doe@example.com": 1, "a@b.com": "x"})];
+        let stats = r.apply(&mut rows).expect("apply ok");
+        assert_eq!(rows[0], json!({"jane.doe@example.com": 1, "a@b.com": "x"}));
+        assert_eq!(stats.total, 0);
+        assert_eq!(stats.keys_rewritten, 0);
     }
 
     #[test]
@@ -909,6 +1200,20 @@ mod tests {
         // PII-bearing string lives 4 levels deep.
         let mut rows = vec![json!({"a": {"b": {"c": {"d": "anything"}}}})];
         let err = r.apply(&mut rows).expect_err("must fail-closed at any depth");
+        assert!(
+            matches!(&err, RedactionError::Internal(msg) if msg.contains("panicked")),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn panic_while_renaming_a_key_fails_closed() {
+        let mut analyzer = Analyzer::empty();
+        analyzer.register(panicking_rule());
+        let r = Redactor::with_analyzer(analyzer);
+        // No string leaf: only the key reaches the panicking recognizer.
+        let mut rows = vec![json!({"doc": {"anything": 1}})];
+        let err = r.apply(&mut rows).expect_err("must fail-closed");
         assert!(
             matches!(&err, RedactionError::Internal(msg) if msg.contains("panicked")),
             "{err}"
@@ -1064,7 +1369,6 @@ mod tests {
     fn rr(entity: Entity, start: usize, end: usize, score: f32, detector: Detector) -> RecognizerResult {
         use crate::result::AnalysisExplanation;
         use crate::validation::ValidationOutcome;
-        use std::borrow::Cow;
         let s = Score::from_static(score);
         RecognizerResult {
             entity_type: entity,

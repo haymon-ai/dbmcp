@@ -4894,6 +4894,44 @@ async fn explain_query_redacts_when_enabled() {
 }
 
 #[tokio::test]
+async fn read_query_hashes_email_keys_in_json() {
+    if backend() == database::Backend::Mariadb {
+        eprintln!("skip: MariaDB returns JSON as text");
+        return;
+    }
+    let rows = handler_with_operator(privacy::Operator::Hash)
+        .read(r#"SELECT CAST('{"x@y.com": 1}' AS JSON) AS j"#.into(), None, None, None)
+        .await
+        .expect("read");
+    assert_eq!(
+        rows.rows[0]["j"],
+        serde_json::json!({"<EMAIL_ADDRESS_06fff299b93c0784>": 1})
+    );
+}
+
+#[tokio::test]
+async fn read_query_suffixes_colliding_email_keys_in_json() {
+    if backend() == database::Backend::Mariadb {
+        eprintln!("skip: MariaDB returns JSON as text");
+        return;
+    }
+    let rows = handler_with_operator(privacy::Operator::Replace)
+        .read(
+            r#"SELECT CAST('{"a@b.com": 1, "c@d.com": 2}' AS JSON) AS j"#.into(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("read");
+    assert_eq!(
+        rows.rows[0]["j"],
+        serde_json::json!({"<EMAIL_ADDRESS>": 1, "<EMAIL_ADDRESS>#2": 2})
+    );
+    assert_eq!(keys(&rows.rows[0]["j"]), ["<EMAIL_ADDRESS>", "<EMAIL_ADDRESS>#2"]);
+}
+
+#[tokio::test]
 async fn read_query_mask_operator_replaces_with_asterisks() {
     let handler = handler_with_operator(privacy::Operator::Mask);
     let rows = handler
