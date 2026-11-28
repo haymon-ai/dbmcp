@@ -4107,6 +4107,44 @@ async fn explain_analyze_redacts_plan_text() {
 }
 
 #[tokio::test]
+async fn read_query_hashes_email_keys_in_json_and_jsonb() {
+    let rows = handler_with_operator(privacy::Operator::Hash)
+        .read(
+            r#"SELECT '{"x@y.com": 1}'::json AS j, '{"x@y.com": 1}'::jsonb AS jb"#.into(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("read");
+    let expected = serde_json::json!({"<EMAIL_ADDRESS_06fff299b93c0784>": 1});
+    assert_eq!(rows.rows[0]["j"], expected);
+    assert_eq!(rows.rows[0]["jb"], expected);
+}
+
+#[tokio::test]
+async fn read_query_suffixes_colliding_email_keys_in_json_and_jsonb() {
+    let rows = handler_with_operator(privacy::Operator::Replace)
+        .read(
+            r#"SELECT '{"a@b.com": 1, "c@d.com": 2}'::json AS j, '{"a@b.com": 1, "c@d.com": 2}'::jsonb AS jb"#.into(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("read");
+    let expected = serde_json::json!({"<EMAIL_ADDRESS>": 1, "<EMAIL_ADDRESS>#2": 2});
+    for column in ["j", "jb"] {
+        assert_eq!(rows.rows[0][column], expected, "{column}");
+        assert_eq!(
+            keys(&rows.rows[0][column]),
+            ["<EMAIL_ADDRESS>", "<EMAIL_ADDRESS>#2"],
+            "{column}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn read_query_mask_operator_replaces_with_asterisks() {
     let handler = handler_with_operator(privacy::Operator::Mask);
     let rows = handler

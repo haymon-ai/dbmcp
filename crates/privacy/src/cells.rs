@@ -2,8 +2,9 @@
 //!
 //! Cell `i` of every row is redacted by the plan's position `i`:
 //!
-//! - `Global`: global detection over every string leaf, with the column name
-//!   as context, exactly like [`Redactor::apply`] on the row object.
+//! - `Global`: global detection over every string leaf and every object key
+//!   inside the value, with the column name as context, exactly like
+//!   [`Redactor::apply`] on the row object.
 //! - `Action`: every non-null value is replaced whole by the rule's operator,
 //!   labelled with its entity. A string is rewritten from its text, anything
 //!   else (numbers, booleans, `json`/`jsonb`, keys included) from its compact
@@ -196,7 +197,7 @@ impl Redactor {
                             *entity
                         }
                         Action::Global => {
-                            roots.push(Frame::KeyedChild(value, name.as_str()));
+                            roots.push(Frame::KeyedChild(value, name.as_str().into()));
                             continue;
                         }
                     };
@@ -501,6 +502,35 @@ mod tests {
         redactor.apply(&mut objects).expect("runs");
         assert_eq!(cells.rows[0][0], objects[0]["contact"]);
         assert_ne!(cells.rows[0][0], json!(EMAIL));
+    }
+
+    #[test]
+    fn global_cells_rename_inner_keys_and_ruled_cells_are_unchanged() {
+        let doc = || json!({ EMAIL: {"k": "v"} });
+        let values = redact(
+            &Redactor::with_defaults(),
+            vec![
+                Position::Global,
+                Position::Action(privacy::Operator::Replace, Entity::UsSsn),
+                Position::Placeholder(Entity::EmailAddress),
+            ],
+            vec![doc(), doc(), doc()],
+        );
+        assert_eq!(
+            values,
+            [
+                json!({"<EMAIL_ADDRESS>": {"k": "v"}}),
+                json!("<US_SSN>"),
+                json!("<EMAIL_ADDRESS>")
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn column_names_are_never_renamed() {
+        let cells = Cells::new(vec![EMAIL.to_owned()], vec![vec![json!(1)]]);
+        let out = Redactor::with_defaults().redact_cells(cells, None).await.expect("runs");
+        assert_eq!(out, [json!({ EMAIL: 1 })]);
     }
 
     #[test]

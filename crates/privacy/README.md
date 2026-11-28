@@ -13,7 +13,7 @@ Fast PII detection and anonymisation for Rust. A zero-dependency regex/checksum 
 - Checksum-validated matches where it matters (Luhn, mod-97 IBAN, NHS mod-11, bech32, base58-check, German Steuer-ID, US SSN rules)
 - Four anonymisation operators — `replace`, `mask`, `redact`, `hash` (keyed HMAC-SHA-256 token, e.g. `<EMAIL_ADDRESS_4e1f0dd69c51e84c>`)
 - Category-scoped analyser builder for tailored recogniser subsets
-- JSON-safe: walks every string leaf at any depth, object keys preserved
+- JSON-safe: walks every string leaf at any depth and renames PII-shaped nested object keys
 - Pure-Rust regex + checksum core — zero runtime dependencies, fully auditable
 - **Optional** ML/NER pass — detects free-form `PERSON`, `LOCATION`, `ORGANIZATION`, `NATIONALITY_RELIGION_POLITICS`, and `FACILITY` spans that regex can't; off by default, local ONNX inference, no network
 

@@ -69,8 +69,22 @@ See [Data types](/privacy/data-types) for every entity type and [Machine Learnin
 
 ## Nested JSON values
 
-Redaction walks every string leaf in `json` and `jsonb` columns (and any other column the backend hands the server as a structured `serde_json::Value::Object` or `Value::Array`). A sensitive string redacts identically whether it arrives as a plain `text` column, a JSON literal cast to `text`, or a leaf nested inside a `jsonb` value at any depth. Non-string scalars (numbers, booleans, `null`) and the JSON shape (key names, array indexes, container ordering) are preserved.
+Redaction walks every string leaf in `json` and `jsonb` columns (and any other column the backend hands the server as a structured `serde_json::Value::Object` or `Value::Array`). A sensitive string redacts identically whether it arrives as a plain `text` column, a JSON literal cast to `text`, or a leaf nested inside a `jsonb` value at any depth. Non-string scalars (numbers, booleans, `null`) and the JSON shape (array indexes, container ordering) are preserved.
 
-JSON object **keys** are never inspected or modified — only values are redacted. A row like `{"jane.doe@example.com": "value"}` returns with the key intact. If you need key redaction, please open an issue; today's contract is values-only.
+### Object keys
+
+Object **keys** inside a JSON value are scanned too and rewritten by `privacy.operator`, so a map keyed by email address, phone number, or IP address does not leak its keys. Keys run through the pattern recognizers only (never the [machine-learning model](/privacy/machine-learning)), with the parent key path as context. Only the detected part of a key changes: under `replace`, `user:alice@example.com` becomes `user:<EMAIL_ADDRESS>`. Under `hash`, a key gets the same token as an equal value, so the two still match. A key with nothing detected is unchanged.
+
+```json
+{"contact": "alice@example.com", "alice@example.com": {"note": "call me"}}
+{"contact": "<EMAIL_ADDRESS>", "<EMAIL_ADDRESS>": {"note": "call me"}}
+```
+
+Sibling keys always stay unique, so no value is dropped:
+
+- When renamed keys collide, the first in the object keeps its key and each later one gets the next suffix no sibling already uses: `<EMAIL_ADDRESS>`, `<EMAIL_ADDRESS>#2`, `<EMAIL_ADDRESS>#3`.
+- Under `redact`, a key that is wholly one detected value becomes the entity placeholder (`<EMAIL_ADDRESS>`, under the same suffix rule) rather than an empty string; a partial match is removed as in a value (`user:alice@example.com` becomes `user:`).
+
+Column names and aliases (including the columns of `EXPLAIN`, `SHOW`, and `DESCRIBE` rows) are never renamed; only keys inside a cell's value are. Key renaming runs under `full` only; [column rules](/privacy/rules) rewrite a ruled column whole, keys included.
 
 Exception: MariaDB and SQLite JSON is text, so it is scanned like any string, **keys included**, and a rewrite can leave invalid JSON. Context comes from the column name, not the key path. Use [`privacy.rules`](/privacy/rules) for such columns.
